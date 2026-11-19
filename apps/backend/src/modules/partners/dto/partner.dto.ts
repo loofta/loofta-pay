@@ -55,6 +55,16 @@ export class UpdatePartnerSettingsDto {
   @IsOptional() @IsString() @MaxLength(64) fee_wallet?: string;
   @ApiPropertyOptional({ description: 'Batches above this many USD need a second member to approve. Owner only.' })
   @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) approval_threshold_usd?: number;
+  @ApiPropertyOptional({ description: 'Let recipients see the payouts they already received from you on the withdraw page. Default true.' })
+  @IsOptional() @IsBoolean() show_history?: boolean;
+  @ApiPropertyOptional({ description: 'Cash-out routes to switch off on the withdraw page: usdc, token, bank, p2p. Empty turns them all on. At least one must stay on.' })
+  @IsOptional() @IsArray() @ArrayMaxSize(4) @IsIn(['usdc', 'token', 'bank', 'p2p'], { each: true }) disabled_withdraw_methods?: string[];
+}
+
+/** Withdraw-page options as a partner's API key sets them. Same rules as the portal. */
+export class SetWithdrawOptionsDto {
+  @IsOptional() @IsBoolean() show_history?: boolean;
+  @IsOptional() @IsArray() @ArrayMaxSize(4) @IsIn(['usdc', 'token', 'bank', 'p2p'], { each: true }) disabled_withdraw_methods?: string[];
 }
 
 export class RecipientInputDto {

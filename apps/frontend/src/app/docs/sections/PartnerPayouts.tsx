@@ -170,6 +170,29 @@ export async function POST(req: Request) {
         Events can arrive more than once. Treat the event id in the <code className="text-orange-300">X-Loofta-Event-Id</code> header as the key to ignore repeats.
       </p>
 
+      <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Choose what your withdraw page offers</h2>
+      <p className="text-base text-slate-400 mb-3">
+        Everything is on by default. You can switch off any cash-out route, and show or hide the list of payouts a
+        person already received. Recipients only ever see their own history. You can also change this in the partner
+        portal under Settings, Withdraw page. At least one route must stay on, and recipients always keep their money.
+      </p>
+      <ul className="list-disc pl-5 space-y-2 text-base text-slate-400 mb-4">
+        <li><code className="text-orange-300">usdc</code>: USDC on Solana, to any wallet.</li>
+        <li><code className="text-orange-300">token</code>: other tokens on other chains.</li>
+        <li><code className="text-orange-300">bank</code>: bank account or card.</li>
+        <li><code className="text-orange-300">p2p</code>: private P2P apps such as Wise, PayPal and Revolut.</li>
+      </ul>
+      <DocsCodeBlock
+        code={`// Offer only USDC and tokens, and hide history
+await loofta.partner.setWithdrawOptions({
+  disabledMethods: ["bank", "p2p"],
+  showHistory: false,
+});
+
+const options = await loofta.partner.getWithdrawOptions();
+// options.enabledMethods, options.disabledMethods, options.showHistory`}
+      />
+
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Show creators their earnings</h2>
       <p className="text-base text-slate-400 mb-3">
         Your creators see what they were paid inside your own app, with a Withdraw button, using the{" "}

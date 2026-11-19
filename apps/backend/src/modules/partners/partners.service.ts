@@ -13,6 +13,7 @@ import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { CreatePartnerDto, RecipientInputDto, UpdatePartnerDto, UpdatePartnerSettingsDto } from './dto/partner.dto';
 import { MAX_PARTNER_FEE_SHARE, computePartnerFeeUsdc } from './partner-fee';
 import { DEMO_ORG_ID, DEMO_PARTNER } from './partner-demo';
+import { enabledMethods, normalizeDisabledMethods } from './partner-withdraw-options';
 import { PartnerPermission, PartnerRole, can, canAssignRole, canModifyMember } from './partner-roles';
 
 export interface Partner {
@@ -41,6 +42,8 @@ export interface Partner {
   treasury_multisig: string | null;
   treasury_vault: string | null;
   treasury_threshold: number | null;
+  show_history: boolean;
+  disabled_withdraw_methods: string[];
 }
 
 /** What anyone (a recipient on the withdraw page, the widget) may see about a partner. */
@@ -53,6 +56,9 @@ export interface PublicPartner {
   withdraw_min_usd: number;
   fee_fixed_usd: number;
   fee_percent_bps: number;
+  /** Cash-out routes this partner has switched off. Empty means all are on. */
+  disabled_withdraw_methods: string[];
+  show_history: boolean;
 }
 
 export interface Membership {
@@ -150,6 +156,8 @@ export class PartnersService {
       website: partner.website,
       contact_email: partner.contact_email,
       kyb_status: partner.kyb_status,
+      show_history: partner.show_history !== false,
+      disabled_withdraw_methods: partner.disabled_withdraw_methods ?? [],
       withdraw_min_usd: Number(partner.withdraw_min_usd),
       fee_fixed_usd: Number(partner.fee_fixed_usd),
       fee_percent_bps: partner.fee_percent_bps,
@@ -204,7 +212,17 @@ export class PartnersService {
     if (orgId === DEMO_ORG_ID) return DEMO_PARTNER;
     const { data } = await this.supabase.partners.select(PUBLIC_COLUMNS).eq('org_id', orgId).eq('status', 'active').maybeSingle();
     if (!data) throw new NotFoundException('Partner not found.');
-    return data as unknown as PublicPartner;
+    return { ...(data as object), ...(await this.withdrawOptions(orgId)) } as unknown as PublicPartner;
+  }
+
+  /**
+   * Read apart from the main columns on purpose: if these columns are missing (migration not run yet) the withdraw
+   * page keeps working with everything on, instead of every recipient seeing "partner not found".
+   */
+  async withdrawOptions(orgId: string): Promise<{ disabled_withdraw_methods: string[]; show_history: boolean }> {
+    const { data, error } = await this.supabase.partners.select('disabled_withdraw_methods, show_history').eq('org_id', orgId).maybeSingle();
+    const row = (error ? null : data) as { disabled_withdraw_methods?: string[] | null; show_history?: boolean | null } | null;
+    return { disabled_withdraw_methods: row?.disabled_withdraw_methods ?? [], show_history: row?.show_history !== false };
   }
 
   async findById(id: string): Promise<Partner | null> {
@@ -279,6 +297,8 @@ export class PartnersService {
     if (dto.fee_fixed_usd !== undefined) patch.fee_fixed_usd = dto.fee_fixed_usd;
     if (dto.fee_percent_bps !== undefined) patch.fee_percent_bps = dto.fee_percent_bps;
     if (dto.approval_threshold_usd !== undefined) patch.approval_threshold_usd = dto.approval_threshold_usd;
+    if (dto.show_history !== undefined) patch.show_history = dto.show_history;
+    if (dto.disabled_withdraw_methods !== undefined) patch.disabled_withdraw_methods = normalizeDisabledMethods(dto.disabled_withdraw_methods);
 
     let walletChange: { from: string | null; to: string; immediate: boolean } | null = null;
     const requested = dto.fee_wallet?.trim();
@@ -313,6 +333,23 @@ export class PartnersService {
       ...(walletChange ? { fee_wallet: walletChange } : {}),
     });
     return data as Partner;
+  }
+
+  /** A partner's API key reads or sets the withdraw-page options. Only ever loosens or tightens what recipients see, never moves money. */
+  async withdrawOptionsForIntegrator(integratorId: string, change?: { show_history?: boolean; disabled_withdraw_methods?: string[] }) {
+    const { data } = await this.supabase.partners.select('id, org_id, status').eq('integrator_id', integratorId).maybeSingle();
+    const partner = data as { id: string; org_id: string; status: string } | null;
+    if (!partner || partner.status !== 'active') throw new NotFoundException('Partner not found.');
+    const patch: Record<string, unknown> = {};
+    if (change?.show_history !== undefined) patch.show_history = change.show_history;
+    if (change?.disabled_withdraw_methods !== undefined) patch.disabled_withdraw_methods = normalizeDisabledMethods(change.disabled_withdraw_methods);
+    if (Object.keys(patch).length) {
+      const { error } = await this.supabase.partners.update(patch).eq('id', partner.id);
+      if (error) throw new BadRequestException('Could not update the withdraw options.');
+      await this.audit(partner.id, null, 'settings.updated', { type: 'partner', id: partner.id }, { fields: Object.keys(patch), via: 'api_key' });
+    }
+    const out = await this.withdrawOptions(partner.org_id);
+    return { show_history: out.show_history, disabled_withdraw_methods: out.disabled_withdraw_methods, enabled_withdraw_methods: enabledMethods(out.disabled_withdraw_methods) };
   }
 
   /** Owner cancels a not-yet-effective fee wallet change (the "that wasn't me" button). */

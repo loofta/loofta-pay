@@ -32,6 +32,7 @@ type PublicPartner = {
   fee_fixed_usd: number;
   fee_percent_bps: number;
 };
+type HistoryItem = { payment_id: string; amount: number; message: string | null; received_at: string; withdrawn_at: string; partner_fee_usdc: number };
 type PayoutView = { payment_id: string; amount: number; message: string | null; created_at: string };
 type Quote = {
   partner: PublicPartner;
@@ -44,6 +45,10 @@ type Quote = {
   min_usd: number;
   can_withdraw: boolean;
   reason: string | null;
+  /** The cash-out routes this partner leaves on. */
+  methods?: Method[];
+  history_enabled?: boolean;
+  history?: HistoryItem[];
 };
 
 /** The same four ways out as the Loofta withdraw screen. Every one ends in the recipient's own wallet first. */
@@ -61,6 +66,7 @@ const METHODS: Record<Method, { title: string; hint: string; badge?: string; ico
 const GROUPS: Record<Group, Method[]> = { crypto: ["usdc", "token"], cash: ["bank", "p2p"] };
 
 const isSol = (c?: string) => !!c && ["sol", "solana"].includes(c.toLowerCase());
+const dayFmt = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** Same row as the Loofta withdraw screen, so both look identical. */
@@ -85,6 +91,27 @@ function MethodRow({ method, onClick }: { method: Method; onClick: () => void })
       </span>
       <span className="text-[#8A8893]">→</span>
     </button>
+  );
+}
+
+/** What this person already received and withdrew from this partner. Shown only when the partner leaves history on. */
+function History({ items }: { items: HistoryItem[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="mt-6">
+      <p className="text-sm font-semibold tracking-[0.14em] text-[#8A8893]">RECEIVED</p>
+      <ul className="mt-3 divide-y divide-white/10 rounded-2xl bg-[#0E0E12] px-4">
+        {items.map((h) => (
+          <li key={h.payment_id} className="flex items-center justify-between gap-3 py-3">
+            <span className="min-w-0">
+              <span className="block truncate text-base text-white">{h.message || "Payout"}</span>
+              <span className="block text-sm text-[#8A8893]">Withdrawn {dayFmt(h.withdrawn_at)}{h.partner_fee_usdc > 0 ? ` · fee ${usd(h.partner_fee_usdc)}` : ""}</span>
+            </span>
+            <span className="shrink-0 text-base font-semibold text-white">{usd(h.amount - h.partner_fee_usdc)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -161,6 +188,10 @@ function WithdrawContent() {
   const hasPayouts = !!quote && quote.gross_usdc > 0;
   const belowMin = hasPayouts && !!quote && quote.gross_usdc < quote.min_usd;
   const fees = quote ? quote.partner_fee_usdc + quote.loofta_fee_usdc : 0;
+  // The partner can switch routes off. Older responses carry no list, which means every route is on.
+  const on = (m: Method) => !quote?.methods || quote.methods.includes(m);
+  const groupsOn = (["crypto", "cash"] as const).filter((g) => GROUPS[g].some(on));
+  const activeGroup: Group = groupsOn.includes(group) ? group : groupsOn[0] ?? "crypto";
 
   const back = () => {
     setMethod(null);
@@ -187,7 +218,7 @@ function WithdrawContent() {
     try {
       const out = await call(`partner-withdraw/${encodeURIComponent(orgId)}/confirm`, {
         method: "POST",
-        body: JSON.stringify({ max_fee_usdc: quote.partner_fee_usdc, ...(method === "usdc" ? { destination_address: wallet.trim() } : {}) }),
+        body: JSON.stringify({ max_fee_usdc: quote.partner_fee_usdc, method, ...(method === "usdc" ? { destination_address: wallet.trim() } : {}) }),
       });
       const sent = (out.results as Array<{ ok: boolean }>).filter((r) => r.ok).length;
       const failed = out.results.length - sent;
@@ -292,9 +323,11 @@ function WithdrawContent() {
 
           {authenticated && !bankOpen && quote && !hasPayouts && quote.processing.length === 0 && (
             <p className="mt-5 text-base leading-relaxed text-[#C8C6D0]">
-              There is nothing to withdraw for {email ?? "this account"} yet. If {name} paid a different email address, sign out and sign in with that one.
+              There is nothing to withdraw for {email ?? "this account"} yet.{quote.history_enabled && (quote.history?.length ?? 0) > 0 ? " What you already received is listed below." : ""} If {name} paid a different email address, sign out and sign in with that one.
             </p>
           )}
+
+          {authenticated && !bankOpen && quote?.history_enabled && <History items={quote.history ?? []} />}
 
           {authenticated && !bankOpen && quote && (hasPayouts || quote.processing.length > 0) && (
             <>
@@ -313,20 +346,22 @@ function WithdrawContent() {
 
               {hasPayouts && !belowMin && !method && (
                 <div className="mt-6 flex flex-col gap-3">
-                  <div className="grid grid-cols-2 rounded-full bg-[#0E0E12] p-1">
-                    {(["crypto", "cash"] as const).map((g) => (
-                      <button
-                        key={g}
-                        type="button"
-                        onClick={() => setGroup(g)}
-                        className={`rounded-full py-2 text-sm font-semibold ${group === g ? "bg-[#2A2A32] text-white" : "text-[#8A8893] hover:text-white"}`}
-                      >
-                        {g === "crypto" ? "Crypto" : "Cash"}
-                      </button>
-                    ))}
-                  </div>
+                  {groupsOn.length > 1 && (
+                    <div className="grid grid-cols-2 rounded-full bg-[#0E0E12] p-1">
+                      {groupsOn.map((g) => (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => setGroup(g)}
+                          className={`rounded-full py-2 text-sm font-semibold ${activeGroup === g ? "bg-[#2A2A32] text-white" : "text-[#8A8893] hover:text-white"}`}
+                        >
+                          {g === "crypto" ? "Crypto" : "Cash"}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <p className="mt-1 text-sm font-semibold tracking-[0.14em] text-[#8A8893]">SEND FUNDS TO</p>
-                  {GROUPS[group].map((m) => (
+                  {GROUPS[activeGroup].filter(on).map((m) => (
                     <MethodRow key={m} method={m} onClick={() => setMethod(m)} />
                   ))}
                 </div>
@@ -447,6 +482,7 @@ function WithdrawContent() {
               )}
 
               {notice && <p className="mt-4 text-base text-[#F2EFE8]">{notice}</p>}
+              {!method && quote.history_enabled && <History items={quote.history ?? []} />}
             </>
           )}
         </div>

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 
 // spl-token and the claims module do not load under jest here. The withdraw service only needs them for balances and the sweep.
 let mockBalances: Record<string, bigint> = {};
@@ -49,6 +49,8 @@ function make(opts: {
   sweepFails?: string[];
   feeWalletReady?: boolean;
   siblingWithdrawn?: boolean;
+  history?: Array<Record<string, unknown>>;
+  historyError?: boolean;
 } = {}) {
   const partner = { ...basePartner, ...(opts.partner ?? {}) };
   const payments = opts.payments ?? [pay('a', 10, B1)];
@@ -61,9 +63,16 @@ function make(opts: {
   for (const m of ['select', 'is', 'not', 'order', 'limit']) paymentsTable[m] = () => paymentsTable;
   paymentsTable.update = (v: Record<string, unknown>) => { stamps.__pending = v; return paymentsTable; };
   let sibling = false;
+  let hist = false;
+  const historyFilters: Array<[string, unknown]> = [];
   paymentsTable.in = () => { sibling = true; return paymentsTable; };
-  paymentsTable.eq = (col: string, val: string) => { if (col === 'id') currentId = val; return paymentsTable; };
+  paymentsTable.eq = (col: string, val: string) => {
+    if (col === 'id') currentId = val;
+    if (col === 'recipient_user_id') { hist = true; historyFilters.push([col, val]); }
+    return paymentsTable;
+  };
   paymentsTable.then = (res: (v: unknown) => unknown) => {
+    if (hist) { hist = false; return Promise.resolve(opts.historyError ? { data: null, error: { message: 'x' } } : { data: opts.history ?? [], error: null }).then(res); }
     if (sibling) { sibling = false; return Promise.resolve({ data: opts.siblingWithdrawn ? [{ id: 'done' }] : [], error: null }).then(res); }
     const isStamp = '__pending' in stamps;
     if (!isStamp) return Promise.resolve({ data: payments, error: null }).then(res);
@@ -93,7 +102,7 @@ function make(opts: {
   const sponsor = { getConnectionForCluster: () => ({}) };
   const config = { get: (k: string) => (k === 'SOLANA_CLUSTER' ? 'mainnet-beta' : undefined) };
   const svc = new PartnerWithdrawService(supabase as never, config as never, partnersSvc as never, claims as never, sponsor as never);
-  return { svc, events, stamps, claims, partnersSvc };
+  return { svc, events, stamps, claims, partnersSvc, historyFilters };
 }
 
 describe('partner withdraw quote', () => {
@@ -292,5 +301,73 @@ describe('flat fee on a retried withdrawal', () => {
     const { svc, stamps } = retry(true);
     await svc.confirm('org_x', 'u1', { maxFeeUsdc: 0.2 });
     expect(Number(stamps.b.partner_fee_usdc)).toBeCloseTo(0.2, 6);
+  });
+});
+
+describe('withdraw history', () => {
+  const past = { id: 'old', amount: 50, description: 'Spring', created_at: '2026-10-01T00:00:00Z', partner_withdrawn_at: '2026-10-02T00:00:00Z', partner_fee_usdc: 1.5 };
+
+  it('lists what this recipient already withdrew, scoped to their own user id', async () => {
+    const { svc, historyFilters } = make({ history: [past] });
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.history_enabled).toBe(true);
+    expect(q.history).toEqual([{ payment_id: 'old', amount: 50, message: 'Spring', received_at: past.created_at, withdrawn_at: past.partner_withdrawn_at, partner_fee_usdc: 1.5 }]);
+    expect(historyFilters).toEqual([['recipient_user_id', 'u1']]);
+  });
+
+  it('returns no history, and does not even query it, when the partner hides it', async () => {
+    const { svc, historyFilters } = make({ partner: { show_history: false }, history: [past] });
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.history_enabled).toBe(false);
+    expect(q.history).toEqual([]);
+    expect(historyFilters).toHaveLength(0);
+  });
+
+  it('treats a partner row without the new columns as history on and every route on', async () => {
+    const { svc } = make();
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.history_enabled).toBe(true);
+    expect(q.methods).toEqual(['usdc', 'token', 'bank', 'p2p']);
+  });
+
+  it('a failed history query is an error, never an empty list', async () => {
+    const { svc } = make({ historyError: true });
+    await expect(svc.quote('org_x', 'u1')).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+});
+
+describe('switched-off withdraw methods', () => {
+  it('lists only the routes the partner left on', async () => {
+    const { svc } = make({ partner: { disabled_withdraw_methods: ['p2p', 'bank'] } });
+    expect((await svc.quote('org_x', 'u1')).methods).toEqual(['usdc', 'token']);
+  });
+
+  it('refuses a switched-off route and sends nothing', async () => {
+    const { svc, events } = make({ partner: { disabled_withdraw_methods: ['p2p'] } });
+    await expect(svc.confirm('org_x', 'u1', { maxFeeUsdc: 5, method: 'p2p' })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(events).toEqual([]);
+  });
+
+  it('refuses a USDC send to an outside wallet when USDC is off, even without a method', async () => {
+    const { svc, events } = make({ partner: { disabled_withdraw_methods: ['usdc'] } });
+    await expect(svc.confirm('org_x', 'u1', { maxFeeUsdc: 5, destinationAddress: FEE_WALLET })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(events).toEqual([]);
+  });
+
+  it('refuses claiming into the own wallet when token, bank and p2p are all off', async () => {
+    const { svc } = make({ partner: { disabled_withdraw_methods: ['token', 'bank', 'p2p'] } });
+    await expect(svc.confirm('org_x', 'u1', { maxFeeUsdc: 5 })).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('still allows an enabled route', async () => {
+    const { svc, events } = make({ partner: { disabled_withdraw_methods: ['p2p'] } });
+    const out = await svc.confirm('org_x', 'u1', { maxFeeUsdc: 5, method: 'bank' });
+    expect(out.results[0].ok).toBe(true);
+    expect(events).toContain('sweep:a');
+  });
+
+  it('rejects a destination wallet combined with a non-USDC method', async () => {
+    const { svc } = make();
+    await expect(svc.confirm('org_x', 'u1', { maxFeeUsdc: 5, method: 'bank', destinationAddress: FEE_WALLET })).rejects.toBeInstanceOf(BadRequestException);
   });
 });

@@ -394,6 +394,18 @@ payout.funded, payout.claimed, payout.withdrawn (carries partner_fee_usdc, net_u
 \`verifyWebhook(rawBody, req.headers.get("x-loofta-signature"), secret)\` using the RAW body, and dedupe on the
 \`X-Loofta-Event-Id\` header because events can repeat.
 
+## 4d. Withdraw page options (optional)
+
+Every cash-out route and the payout history are ON by default. Only change them if the user asks.
+
+\`\`\`ts
+await loofta.partner.setWithdrawOptions({ disabledMethods: ["bank", "p2p"], showHistory: false });
+const o = await loofta.partner.getWithdrawOptions(); // o.enabledMethods, o.disabledMethods, o.showHistory
+\`\`\`
+
+Methods: \`usdc\` (USDC on Solana), \`token\` (other tokens), \`bank\` (bank or card), \`p2p\` (Wise, PayPal, Revolut...).
+At least one must stay on. Send only the fields to change. This never touches fees or where money goes.
+
 ## 5. Show users their earnings (optional)
 
 Server, for the signed-in user:

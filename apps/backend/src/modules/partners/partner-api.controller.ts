@@ -6,7 +6,7 @@ import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { RequireScope } from '@/common/decorators/require-scope.decorator';
 import type { AuthenticatedIntegrator } from '@/modules/integrators/integrators.service';
 import { CreatePartnerBatchDto } from './dto/partner-batch.dto';
-import { SetWebhookDto } from './dto/partner.dto';
+import { SetWebhookDto, SetWithdrawOptionsDto } from './dto/partner.dto';
 import { PartnerKeysService } from './partner-keys.service';
 import { PartnerPayoutsService } from './partner-payouts.service';
 import { PartnersService } from './partners.service';
@@ -116,5 +116,22 @@ export class PartnerApiController {
   @ApiOperation({ summary: 'Set (or clear with null) the https URL that receives signed payout and batch events. Returns the signing secret.' })
   async setWebhook(@Body() dto: SetWebhookDto, @Req() req: { integrator: AuthenticatedIntegrator }) {
     return this.keys.setWebhookForIntegrator(req.integrator.id, dto.url ?? null);
+  }
+
+  @Get('withdraw-options')
+  @RequireScope('batches:write')
+  @RateLimit(60, 60, 'partner-api:withdraw-options-get', 'integrator')
+  @ApiOperation({ summary: 'Which cash-out routes and history your recipients see on the withdraw page' })
+  async getWithdrawOptions(@Req() req: { integrator: AuthenticatedIntegrator }) {
+    return this.partners.withdrawOptionsForIntegrator(req.integrator.id);
+  }
+
+  @Post('withdraw-options')
+  @HttpCode(HttpStatus.OK)
+  @RequireScope('batches:write')
+  @RateLimit(20, 60, 'partner-api:withdraw-options-set', 'integrator')
+  @ApiOperation({ summary: 'Show or hide payout history and switch cash-out routes (usdc, token, bank, p2p) on or off' })
+  async setWithdrawOptions(@Body() dto: SetWithdrawOptionsDto, @Req() req: { integrator: AuthenticatedIntegrator }) {
+    return this.partners.withdrawOptionsForIntegrator(req.integrator.id, dto);
   }
 }

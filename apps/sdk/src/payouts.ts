@@ -4,6 +4,8 @@ import type {
   CreatePartnerBatchParams,
   CreatePayoutBatchParams,
   PartnerBatch,
+  SetWithdrawOptionsParams,
+  WithdrawOptions,
   PayoutWebhookEvent,
   PayoutBatchResult,
   PayoutBatchStatus,
@@ -127,6 +129,15 @@ export class PayoutsApi {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapWithdrawOptions(d: any): WithdrawOptions {
+  return {
+    showHistory: d.show_history !== false,
+    disabledMethods: d.disabled_withdraw_methods ?? [],
+    enabledMethods: d.enabled_withdraw_methods ?? [],
+  };
+}
+
 function mapPartnerBatch(d: any): PartnerBatch {
   return {
     batchId: d.batch_id ?? d.id,
@@ -203,6 +214,23 @@ export class PartnerApi {
   async setWebhook(url: string | null): Promise<{ url: string | null; secret: string }> {
     const d = await this.http.request<{ url: string | null; secret: string }>("POST", "/partner-api/webhook", { url });
     return { url: d.url ?? null, secret: d.secret };
+  }
+
+  /** What your recipients can do on your withdraw page: payout history and which cash-out routes are on. */
+  async getWithdrawOptions(): Promise<WithdrawOptions> {
+    return mapWithdrawOptions(await this.http.request<unknown>("GET", "/partner-api/withdraw-options"));
+  }
+
+  /**
+   * Show or hide payout history, and switch cash-out routes on or off. Everything is on by default. Send only what
+   * you want to change. At least one route must stay on, and recipients always keep their money.
+   */
+  async setWithdrawOptions(params: SetWithdrawOptionsParams): Promise<WithdrawOptions> {
+    const d = await this.http.request<unknown>("POST", "/partner-api/withdraw-options", {
+      show_history: params.showHistory,
+      disabled_withdraw_methods: params.disabledMethods,
+    });
+    return mapWithdrawOptions(d);
   }
 }
 

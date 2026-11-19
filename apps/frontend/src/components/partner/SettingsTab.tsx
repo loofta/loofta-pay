@@ -21,8 +21,17 @@ type Settings = {
   fee_wallet_pending: string | null;
   fee_wallet_effective_at: string | null;
   approval_threshold_usd: number;
+  show_history?: boolean;
+  disabled_withdraw_methods?: string[];
   my_role: PartnerRole;
 };
+
+const METHOD_OPTIONS: { id: string; label: string; hint: string }[] = [
+  { id: "usdc", label: "USDC on Solana", hint: "To any Solana wallet" },
+  { id: "token", label: "Other tokens", hint: "BTC, ETH, ZEC and other chains" },
+  { id: "bank", label: "Bank or cards", hint: "Bank account, debit card or PAJ Cash" },
+  { id: "p2p", label: "Private P2P", hint: "Wise, PayPal, Revolut, Venmo and more" },
+];
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -176,6 +185,57 @@ export function SettingsTab({ orgId }: { orgId: string }) {
               onClick={() => void save(`${base}/settings`, { withdraw_min_usd: s.withdraw_min_usd, fee_fixed_usd: s.fee_fixed_usd, fee_percent_bps: s.fee_percent_bps }, "Fees saved.")}
             >
               Save fees
+            </Btn>
+          </div>
+        )}
+      </SplitSection>
+
+      <SplitSection title="Withdraw page" desc="What your recipients can do on your withdraw page. Everything is on unless you switch it off.">
+        <div className="space-y-3">
+          <label className="flex items-start gap-3 rounded-xl border border-white/[0.07] bg-[#121214] p-3.5">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              disabled={!canEdit}
+              checked={s.show_history !== false}
+              onChange={(e) => set("show_history", e.target.checked)}
+            />
+            <span>
+              <span className="block text-[15px] font-medium text-[#EDEDEF]">Show payout history</span>
+              <span className="block text-[14px] text-[#9C9CA5]">Recipients see the payouts they already withdrew from you. They only ever see their own.</span>
+            </span>
+          </label>
+          <p className="pt-2 text-[14px] text-[#9C9CA5]">Ways to withdraw</p>
+          {METHOD_OPTIONS.map((m) => {
+            const off = s.disabled_withdraw_methods ?? [];
+            const enabled = !off.includes(m.id);
+            // The last route left on cannot be switched off, or recipients would have no way to cash out.
+            const last = enabled && METHOD_OPTIONS.length - off.length <= 1;
+            return (
+              <label key={m.id} className="flex items-start gap-3 rounded-xl border border-white/[0.07] bg-[#121214] p-3.5">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  disabled={!canEdit || last}
+                  checked={enabled}
+                  onChange={(e) => set("disabled_withdraw_methods", e.target.checked ? off.filter((x) => x !== m.id) : [...off, m.id])}
+                />
+                <span>
+                  <span className="block text-[15px] font-medium text-[#EDEDEF]">{m.label}</span>
+                  <span className="block text-[14px] text-[#9C9CA5]">{m.hint}</span>
+                </span>
+              </label>
+            );
+          })}
+          <p className="text-[14px] text-[#9C9CA5]">At least one way must stay on. Recipients always keep their money, this only changes which options your page offers.</p>
+        </div>
+        {canEdit && (
+          <div className="flex justify-end">
+            <Btn
+              disabled={busy}
+              onClick={() => void save(`${base}/settings`, { show_history: s.show_history !== false, disabled_withdraw_methods: s.disabled_withdraw_methods ?? [] }, "Withdraw page saved.")}
+            >
+              Save withdraw page
             </Btn>
           </div>
         )}

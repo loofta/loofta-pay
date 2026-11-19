@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
@@ -11,6 +11,8 @@ class ConfirmWithdrawDto {
   @IsNumber() @Min(0) @Max(1_000_000) max_fee_usdc: number;
   /** Optional: send to this Solana wallet instead of the recipient's own Loofta wallet. */
   @IsOptional() @IsString() @MaxLength(64) destination_address?: string;
+  /** Which route the recipient picked. The partner may have switched it off. */
+  @IsOptional() @IsIn(['usdc', 'token', 'bank', 'p2p']) method?: string;
 }
 
 /** Recipient side of a partner payout. Default-deny: a verified login is required, and identity is derived from it. */
@@ -31,6 +33,6 @@ export class PartnerWithdrawController {
   @HttpCode(HttpStatus.OK)
   @RateLimit(5, 60, 'partner-withdraw:confirm')
   confirm(@PrivyUser() user: { id: string }, @Param('orgId') orgId: string, @Body() dto: ConfirmWithdrawDto) {
-    return this.withdraw.confirm(orgId, user.id, { maxFeeUsdc: dto.max_fee_usdc, destinationAddress: dto.destination_address });
+    return this.withdraw.confirm(orgId, user.id, { maxFeeUsdc: dto.max_fee_usdc, destinationAddress: dto.destination_address, method: dto.method });
   }
 }

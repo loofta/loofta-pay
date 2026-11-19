@@ -220,6 +220,24 @@ export interface CreatePartnerBatchParams {
   scheduledFor?: Date | string;
 }
 
+/** A way a recipient can cash out on your withdraw page. */
+export type WithdrawMethod = "usdc" | "token" | "bank" | "p2p";
+
+export interface WithdrawOptions {
+  /** Recipients see the payouts they already withdrew from you. */
+  showHistory: boolean;
+  /** Routes you switched off. Empty means all four are on, which is the default. */
+  disabledMethods: WithdrawMethod[];
+  /** Routes recipients can use right now. */
+  enabledMethods: WithdrawMethod[];
+}
+
+export interface SetWithdrawOptionsParams {
+  showHistory?: boolean;
+  /** usdc (USDC on Solana), token (other tokens), bank (bank or cards), p2p (private P2P). At least one must stay on. */
+  disabledMethods?: WithdrawMethod[];
+}
+
 export interface PartnerBatch {
   batchId: string;
   /** pending_approval, approved, awaiting_funding, executed, cancelled or rejected. */

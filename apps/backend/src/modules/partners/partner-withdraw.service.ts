@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PublicKey } from '@solana/web3.js';
 import { getAccount, getAssociatedTokenAddress } from '@solana/spl-token';
@@ -10,6 +10,7 @@ import { isValidSolanaAddress } from '@/common/solana-address';
 import { PartnersService, Partner, PublicPartner } from './partners.service';
 import { allocateFeeUnits, computePartnerFeeUsdc } from './partner-fee';
 import { DEMO_ORG_ID, demoConfirm, demoQuote } from './partner-demo';
+import { WITHDRAW_METHODS, WithdrawMethod, enabledMethods } from './partner-withdraw-options';
 
 const MAX_PAYOUTS_PER_WITHDRAWAL = 50;
 const toUnits = (usd: number) => BigInt(Math.round(usd * 1_000_000));
@@ -22,6 +23,18 @@ interface PayoutView {
   funded: boolean;
 }
 
+/** A payout the signed-in recipient already withdrew from this partner. */
+export interface HistoryView {
+  payment_id: string;
+  amount: number;
+  message: string | null;
+  received_at: string;
+  withdrawn_at: string;
+  partner_fee_usdc: number;
+}
+
+const MAX_HISTORY = 50;
+
 export interface WithdrawQuote {
   partner: PublicPartner;
   available: PayoutView[];
@@ -33,6 +46,11 @@ export interface WithdrawQuote {
   min_usd: number;
   can_withdraw: boolean;
   reason: string | null;
+  /** Routes this partner leaves on, in display order. */
+  methods: WithdrawMethod[];
+  /** False when the partner hides history; `history` is then always empty. */
+  history_enabled: boolean;
+  history: HistoryView[];
 }
 
 /**
@@ -159,14 +177,45 @@ export class PartnerWithdrawService {
     };
   }
 
+  /**
+   * Payouts this user already withdrew from this partner. Ownership is recipient_user_id, which the claim stamps with the
+   * verified login, so another user's payouts can never appear. Database only, no chain reads, capped.
+   */
+  private async findHistory(partner: Partner, userId: string): Promise<HistoryView[]> {
+    const { data, error } = await this.supabase.payments
+      .select('id, amount, description, created_at, partner_withdrawn_at, partner_fee_usdc')
+      .eq('partner_id', partner.id)
+      .eq('recipient_user_id', userId)
+      .not('partner_withdrawn_at', 'is', null)
+      .order('partner_withdrawn_at', { ascending: false })
+      .limit(MAX_HISTORY);
+    if (error) {
+      this.logger.error(`Partner withdraw: could not load history for partner ${partner.id}: ${error.message}`);
+      throw new ServiceUnavailableException('Withdrawals are temporarily unavailable. Please try again soon.');
+    }
+    return (data ?? []).map((r) => ({
+      payment_id: r.id as string,
+      amount: Number(r.amount) || 0,
+      message: (r.description as string | null) ?? null,
+      received_at: r.created_at as string,
+      withdrawn_at: r.partner_withdrawn_at as string,
+      partner_fee_usdc: Number(r.partner_fee_usdc) || 0,
+    }));
+  }
+
   async quote(orgId: string, userId: string): Promise<WithdrawQuote> {
     if (orgId === DEMO_ORG_ID) return demoQuote();
     const partner = await this.loadPartner(orgId);
     const c = await this.compute(partner, userId);
     const { data: pub } = await this.supabase.partners
       .select('org_id, name, logo_url, brand_color, withdraw_min_usd, fee_fixed_usd, fee_percent_bps').eq('id', partner.id).single();
+    const historyEnabled = (partner as { show_history?: boolean }).show_history !== false;
+    const disabled = (partner as { disabled_withdraw_methods?: string[] }).disabled_withdraw_methods ?? [];
     return {
-      partner: pub as unknown as PublicPartner,
+      partner: { ...(pub as object), disabled_withdraw_methods: disabled, show_history: historyEnabled } as unknown as PublicPartner,
+      methods: enabledMethods(disabled),
+      history_enabled: historyEnabled,
+      history: historyEnabled ? await this.findHistory(partner, userId) : [],
       available: c.view,
       processing: c.processing,
       gross_usdc: c.gross,
@@ -183,7 +232,8 @@ export class PartnerWithdrawService {
    * Withdraws everything currently available. `maxFeeUsdc` is the partner fee the recipient was
    * shown; if the real fee is higher (the partner changed it in between) nothing is stamped or sent.
    */
-  async confirm(orgId: string, userId: string, opts: { maxFeeUsdc: number; destinationAddress?: string }) {
+  async confirm(orgId: string, userId: string, opts: { maxFeeUsdc: number; destinationAddress?: string; method?: string }) {
+    if (opts.method !== undefined && !WITHDRAW_METHODS.includes(opts.method as WithdrawMethod)) throw new BadRequestException('Unknown withdraw method.');
     if (orgId === DEMO_ORG_ID) {
       if (!Number.isFinite(opts.maxFeeUsdc) || opts.maxFeeUsdc < 0) throw new BadRequestException('max_fee_usdc is required.');
       if (opts.destinationAddress && !isValidSolanaAddress(opts.destinationAddress.trim())) throw new BadRequestException('Invalid destination address.');
@@ -194,6 +244,11 @@ export class PartnerWithdrawService {
     if (!Number.isFinite(opts.maxFeeUsdc) || opts.maxFeeUsdc < 0) throw new BadRequestException('max_fee_usdc is required.');
 
     const partner = await this.loadPartner(orgId);
+    // Sending to an external wallet is the USDC route; claiming into the recipient's own wallet serves the other three.
+    const on = enabledMethods((partner as { disabled_withdraw_methods?: string[] }).disabled_withdraw_methods);
+    const wanted: WithdrawMethod[] = opts.method ? [opts.method as WithdrawMethod] : dest ? ['usdc'] : ['token', 'bank', 'p2p'];
+    if (dest && opts.method && opts.method !== 'usdc') throw new BadRequestException('A destination wallet only applies to USDC withdrawals.');
+    if (!wanted.some((m) => on.includes(m))) throw new ForbiddenException('This way of withdrawing is switched off by this partner.');
     const c = await this.compute(partner, userId);
     if (c.reason) throw new BadRequestException(c.reason);
     if (c.partnerFee > opts.maxFeeUsdc + 1e-9) {

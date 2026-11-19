@@ -1,6 +1,7 @@
 import type { PublicPartner } from './partners.service';
 import type { WithdrawQuote } from './partner-withdraw.service';
 import { computePartnerFeeUsdc } from './partner-fee';
+import { WITHDRAW_METHODS } from './partner-withdraw-options';
 
 /**
  * A built-in sample partner, so anyone can open the real withdraw page at `?orgId=demo` and click through it.
@@ -18,9 +19,16 @@ export const DEMO_PARTNER: PublicPartner = {
   withdraw_min_usd: 1,
   fee_fixed_usd: 0.25,
   fee_percent_bps: 100,
+  disabled_withdraw_methods: [],
+  show_history: true,
 };
 
 const DEMO_PRIZE_USD = 120;
+const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+const DEMO_HISTORY = [
+  { payment_id: 'demo-past-2', amount: 45, message: 'Summer Quest, weekly bonus', partner_fee_usdc: 0.7, daysAgo: 9 },
+  { payment_id: 'demo-past-1', amount: 200, message: 'Spring Quest, 2nd place', partner_fee_usdc: 2.25, daysAgo: 41 },
+];
 
 export function demoQuote(): WithdrawQuote {
   const partnerFee = computePartnerFeeUsdc(DEMO_PARTNER, DEMO_PRIZE_USD);
@@ -43,6 +51,9 @@ export function demoQuote(): WithdrawQuote {
     min_usd: DEMO_PARTNER.withdraw_min_usd,
     can_withdraw: true,
     reason: null,
+    methods: [...WITHDRAW_METHODS],
+    history_enabled: true,
+    history: DEMO_HISTORY.map((h) => ({ ...h, received_at: ago(h.daysAgo + 1), withdrawn_at: ago(h.daysAgo) })),
   };
 }
 

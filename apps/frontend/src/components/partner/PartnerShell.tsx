@@ -202,7 +202,6 @@ export function PartnerShell({
                 </div>
                 <div className="text-[13px] text-[#B4B4BC]">Network fees paid in USDC</div>
               </button>
-              <div className="px-1 text-[13px] text-[#8E8E98]">Payouts powered by Loofta</div>
             </div>
           </aside>
         )}
@@ -230,7 +229,6 @@ export function PartnerShell({
 
       <footer className="flex flex-wrap justify-between gap-4 px-[clamp(16px,3vw,40px)] py-[18px] text-[13.5px] text-[#8E8E98]">
         <div className="flex gap-5">
-          <span>Payouts powered by Loofta</span>
           <a href="/terms" className="hover:text-[#C9C9D0]">
             Terms
           </a>
