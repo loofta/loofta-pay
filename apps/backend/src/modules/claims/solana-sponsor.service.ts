@@ -1066,25 +1066,38 @@ export class SolanaSponsorService {
    * 2026-11-20: a client-built tx moved ~8 USDC out of the fee payer's ATA to a burner, signed by
    * the fee payer alone, then swept to the attacker.
    */
-  private assertFeePayerNotTokenAuthority(tx: Transaction | VersionedTransaction): void {
+  private assertFeePayerNotTokenAuthority(tx: Transaction | VersionedTransaction, allowFeePayerSystemTransfer = false): void {
     const feePayer = this.feePayerAddress;
     if (!feePayer) throw new Error('Solana fee sponsorship is not configured');
+    const COMPUTE = 'ComputeBudget111111111111111111111111111111';
+    // Priority fee the fee payer would pay, in lamports, must stay tiny: an uncapped
+    // SetComputeUnitPrice lets a client burn the fee payer's SOL on a single transaction.
+    const MAX_PRIORITY_LAMPORTS = 200_000n;
+    let cuLimit = 1_400_000n;
+    let cuPriceMicro = 0n;
+    const check = (prog: string, data: Uint8Array, referencesFeePayer: boolean) => {
+      if (prog === COMPUTE) {
+        const d = Buffer.from(data);
+        if (d[0] === 2 && d.length >= 5) cuLimit = BigInt(d.readUInt32LE(1));
+        if (d[0] === 3 && d.length >= 9) cuPriceMicro = d.readBigUInt64LE(1);
+        return;
+      }
+      if (!referencesFeePayer || prog === ATA_PROGRAM_ID) return;
+      if (allowFeePayerSystemTransfer && prog === SystemProgram.programId.toBase58() && Buffer.from(data).readUInt32LE(0) === 2) return;
+      this.logger.error(`SolanaSponsor: BLOCKED instruction from ${prog} naming the fee payer wallet (drain attempt)`);
+      throw new Error('Transaction uses the fee payer wallet in a disallowed instruction');
+    };
     if (tx instanceof Transaction) {
-      for (const ix of tx.instructions) {
-        if (isSponsoredTokenProgram(ix.programId.toBase58()) && ix.keys.some((k) => k.pubkey.toBase58() === feePayer)) {
-          this.logger.error('SolanaSponsor: BLOCKED token instruction naming the fee payer as an account (drain attempt)');
-          throw new Error('Transaction uses the fee payer wallet in a token instruction');
-        }
+      for (const ix of tx.instructions) check(ix.programId.toBase58(), ix.data, ix.keys.some((k) => k.pubkey.toBase58() === feePayer));
+    } else {
+      const keys = tx.message.getAccountKeys().staticAccountKeys;
+      for (const ix of tx.message.compiledInstructions) {
+        check(keys[ix.programIdIndex]?.toBase58() ?? '', ix.data, ix.accountKeyIndexes.some((i) => keys[i]?.toBase58() === feePayer));
       }
-      return;
     }
-    const keys = tx.message.getAccountKeys().staticAccountKeys;
-    for (const ix of tx.message.compiledInstructions) {
-      if (!isSponsoredTokenProgram(keys[ix.programIdIndex]?.toBase58())) continue;
-      if (ix.accountKeyIndexes.some((i) => keys[i]?.toBase58() === feePayer)) {
-        this.logger.error('SolanaSponsor: BLOCKED token instruction naming the fee payer as an account (drain attempt, v0)');
-        throw new Error('Transaction uses the fee payer wallet in a token instruction');
-      }
+    if ((cuLimit * cuPriceMicro) / 1_000_000n > MAX_PRIORITY_LAMPORTS) {
+      this.logger.error(`SolanaSponsor: BLOCKED excessive priority fee limit=${cuLimit} price=${cuPriceMicro}`);
+      throw new Error('Transaction priority fee is too high');
     }
   }
 
@@ -1468,7 +1481,7 @@ export class SolanaSponsorService {
           }
         }
       }
-      this.assertFeePayerNotTokenAuthority(legacy);
+      this.assertFeePayerNotTokenAuthority(legacy, true);
       legacy.partialSign(this.feePayerKeypair);
       if (!legacy.verifySignatures()) {
         const signerState = legacy.signatures.map((s) => ({
@@ -1539,7 +1552,7 @@ export class SolanaSponsorService {
           }
         }
       }
-      this.assertFeePayerNotTokenAuthority(versioned);
+      this.assertFeePayerNotTokenAuthority(versioned, true);
       versioned.sign([this.feePayerKeypair]);
       serializedForBroadcast = versioned.serialize();
     }

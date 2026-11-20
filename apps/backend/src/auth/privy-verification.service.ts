@@ -29,6 +29,29 @@ export class PrivyVerificationService {
     }
   }
 
+  private readonly identityCache = new Map<string, { ok: boolean; at: number }>();
+
+  /**
+   * True if the Privy account has at least one non-wallet login method (email, phone, social).
+   * A wallet-only account costs an attacker nothing to mint, so money-moving and sponsored
+   * routes require more than a bare wallet (2026-11-20: throwaway Phantom-only accounts drained
+   * the fee payer). Fails open if Privy itself is unreachable, so an outage never locks users out.
+   */
+  async hasVerifiedIdentity(userId: string): Promise<boolean> {
+    if (!this.privyClient) return true;
+    const hit = this.identityCache.get(userId);
+    if (hit && Date.now() - hit.at < (hit.ok ? 300_000 : 30_000)) return hit.ok;
+    try {
+      const user = await this.privyClient.getUser(userId);
+      const ok = (user.linkedAccounts ?? []).some((a) => /^(email|phone|custom_auth|telegram)$|_oauth$/.test(String((a as { type?: string }).type)));
+      this.identityCache.set(userId, { ok, at: Date.now() });
+      return ok;
+    } catch (e: any) {
+      this.logger.warn(`[hasVerifiedIdentity] Privy lookup failed for ${userId}: ${e?.message}`);
+      return true;
+    }
+  }
+
   get isConfigured(): boolean {
     return this.privyClient !== null;
   }

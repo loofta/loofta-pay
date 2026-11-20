@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Param, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiSecurity } from '@nestjs/swagger';
 import { IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
-import { AuthGuard, RateLimitGuard } from '@/common/guards';
+import { AuthGuard, RateLimitGuard, VerifiedIdentityGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { IntegratorsService } from './integrators.service';
@@ -24,7 +24,7 @@ class UpdateBrandingDto {
  */
 @ApiTags('integrators')
 @Controller('integrators/self-serve')
-@UseGuards(AuthGuard, RateLimitGuard)
+@UseGuards(AuthGuard, VerifiedIdentityGuard, RateLimitGuard)
 @ApiSecurity('privy-auth')
 export class SelfServeIntegratorsController {
   constructor(private readonly integrators: IntegratorsService) {}
