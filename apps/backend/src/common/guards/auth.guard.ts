@@ -10,6 +10,8 @@ import {
 import { Reflector } from '@nestjs/core';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { SupabaseService } from '@/database/supabase.service';
+import { ALLOW_WALLET_ONLY_KEY } from './allow-wallet-only';
+import { assertVerifiedIdentity } from './verified-identity.guard';
 
 // Short in-memory cache so the suspension check is not a DB round trip on every request.
 // A suspension takes effect within SUSPENSION_CACHE_MS on each backend instance.
@@ -69,6 +71,8 @@ export class AuthGuard implements CanActivate {
       if (await this.isSuspended(userId)) {
         throw new ForbiddenException('Your account has been suspended. Contact hello@loofta.xyz.');
       }
+      const allowWalletOnly = this.reflector.getAllAndOverride<boolean>(ALLOW_WALLET_ONLY_KEY, [context.getHandler(), context.getClass()]);
+      if (!allowWalletOnly) await assertVerifiedIdentity(this.privy, this.supabase, userId);
       request.user = { id: userId };
       return true;
     }

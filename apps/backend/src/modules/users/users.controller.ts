@@ -1,5 +1,5 @@
 import { getClientIp } from '@/common/get-client-ip';
-import { AllowWalletOnly } from '@/common/guards/verified-identity.guard';
+import { AllowWalletOnly } from '@/common/guards/allow-wallet-only';
 import {
   Controller,
   Get,
