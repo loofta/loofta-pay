@@ -67,6 +67,7 @@ import {
 } from "@/services/pajCash";
 import { computeLooftaFeeUsdc } from "@/lib/pajCashFee";
 import { PEER_PLATFORMS } from "@/lib/peerPlatforms";
+import { ClaimCashTiles } from "@/components/claim/ClaimCashTiles";
 import { cashoutPayoutUsdc, getPeerEstimate, usdc as peerUsdc } from "@/services/peerCash";
 import { SolanaWalletConnectProvider, useWallet, WalletMultiButton } from "@/components/SolanaWalletConnect";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
@@ -2947,21 +2948,7 @@ export function ClaimPayView({
                   </span>
                   <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-sm font-medium text-amber-300">Easiest</span>
                 </span>
-                <span className="grid grid-cols-3 gap-x-2 gap-y-3">
-                  {[
-                    ...PEER_PLATFORMS.map((p) => ({ id: p.id, name: p.name, logo: p.logo })),
-                    { id: "coinbase", name: "Coinbase", logo: "/images/icons/coinbase-logo.png" },
-                    { id: "paj", name: "PAJ Cash", logo: "/images/icons/paj-cash-logo.svg" },
-                  ].map((p) => (
-                    <span key={p.id} className="flex flex-col items-center gap-1.5">
-                      <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-white/5 border border-white/10">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={p.logo} alt="" className="h-7 w-7 object-contain" />
-                      </span>
-                      <span className="text-sm font-normal text-slate-400">{p.name}</span>
-                    </span>
-                  ))}
-                </span>
+                <ClaimCashTiles />
               </span>
             </button>
           </>
@@ -5313,13 +5300,11 @@ export function ClaimPayView({
 
     setSubmittingTx(true);
     try {
-      const token = (process as any)?.env?.NEXT_PUBLIC_ONECLICK_JWT;
       const r = await fetch("https://1click.chaindefuser.com/v0/deposit/submit", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Accept": "*/*",
-          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           txHash: hash,
