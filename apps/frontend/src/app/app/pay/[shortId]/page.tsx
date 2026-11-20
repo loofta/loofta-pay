@@ -11,7 +11,7 @@ import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { useToast } from "@/components/ui/use-toast";
 import { sora } from "@/components/home-v4/fonts";
 import { getPlatform } from "@/lib/peerPlatforms";
-import { cashoutPayoutUsdc } from "@/services/peerCash";
+import { cashoutPayoutAtRate } from "@/services/peerCash";
 import { useResumePeerCashout } from "@/hooks/useResumePeerCashout";
 
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
@@ -25,6 +25,7 @@ type PayShare = {
   amountUsdc: number;
   status: string;
   etaLabel: string | null;
+  ratePercent?: number | null;
   peerDepositUrl: string | null;
 };
 
@@ -156,7 +157,8 @@ export default function PaySharePage() {
     }
   };
 
-  const withdrawPeerDeposit = async (peerDepositId: string, token: string) => {
+  /** Base wallet client that signs through Privy with gas sponsored. Shared by cancel and speed up. */
+  const getBaseSigner = async () => {
     const accounts = (user?.linkedAccounts ?? []) as Array<{ address?: string; type?: string; chainType?: string }>;
     const linked = accounts
       .filter((a) => !(a.type || "").toLowerCase().includes("solana") && (a.chainType || "").toLowerCase() !== "solana")
@@ -202,6 +204,14 @@ export default function PaySharePage() {
       }),
     });
 
+    return { walletClient, baseWallet };
+  };
+
+  const withdrawPeerDeposit = async (peerDepositId: string, token: string) => {
+    const { walletClient, baseWallet } = await getBaseSigner();
+
+    const { base } = await import("viem/chains");
+    const { createPublicClient, encodeFunctionData, erc20Abi, http } = await import("viem");
     const { peerWithdraw } = await import("@/services/peerCash");
     await peerWithdraw(peerDepositId, walletClient as never);
     const publicClient = createPublicClient({ chain: base, transport: http("https://mainnet.base.org") });
@@ -260,7 +270,8 @@ export default function PaySharePage() {
 
   const arrived = isPaid(payment.status);
   const cancelled = isCancelled(payment.status);
-  const amount = cashoutPayoutUsdc(payment.amountUsdc).toFixed(2);
+  const payoutNum = cashoutPayoutAtRate(payment.amountUsdc, payment.ratePercent);
+  const amount = payoutNum.toFixed(2);
   const handle = payment.identifier.replace(/^[@$]/, "");
   const recipientLabel = `${handle} on ${payment.platformName}`;
   const logo = getPlatform(payment.platform)?.logo;
@@ -342,7 +353,7 @@ export default function PaySharePage() {
           <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-4">
             <div className="flex items-center justify-between">
               <span className="text-base text-gray-500">Recipient receives</span>
-              <span className="text-base font-semibold text-gray-900">${cashoutPayoutUsdc(payment.amountUsdc).toFixed(2)} {payment.currency}</span>
+              <span className="text-base font-semibold text-gray-900">${amount} {payment.currency}</span>
             </div>
             <div className="flex items-center justify-between border-t border-gray-200 pt-2">
               <span className="text-base text-gray-500">Sent to</span>

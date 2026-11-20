@@ -28,6 +28,11 @@ export class CreateOfframpDto {
   @IsBoolean()
   coverBridgeFee?: boolean;
 
+  /** Fast delivery: the market maker keeps 1% so the order fills sooner. Off by default. */
+  @IsOptional()
+  @IsBoolean()
+  fast?: boolean;
+
   @IsString()
   @IsNotEmpty()
   @MaxLength(64)

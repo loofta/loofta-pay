@@ -38,7 +38,8 @@ import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import bs58 from "bs58";
 import { useReducedMotion } from "framer-motion";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
-import { cashoutDepositAtomic, cashoutGrossUsdc, cashoutPayoutUsdc } from "@/services/peerCash";
+import { cashoutDepositAtomic, cashoutGrossUsdc, cashoutPayoutUsdc, FAST_RATE_PERCENT } from "@/services/peerCash";
+import { FastDeliverySwitch } from "@/components/cashout/FastDeliveryControls";
 
 /** Gate check before any EVM gas-sponsored transaction. Throws if rate-limited. */
 async function assertEvmSponsorAllowed(walletAddress: string, userId: string, accessToken: string | null) {
@@ -556,6 +557,11 @@ export function BalanceModal({
   const [peerBasePending, setPeerBasePending] = useState(false);
   const [peerFailMessage, setPeerFailMessage] = useState<string | null>(null);
   const [peerSubmitting, setPeerSubmitting] = useState(false);
+  // Fast delivery: the market maker keeps 1% so the order fills sooner. Off by default, chosen at checkout.
+  const [peerFast, setPeerFast] = useState(false);
+  const peerFastRef = useRef(false);
+  peerFastRef.current = peerFast;
+  useEffect(() => { setPeerFast(false); }, [peerPay?.platformId, peerPay?.identifier, peerPay?.amountUsd]);
   const [peerOfframpId, setPeerOfframpId] = useState<string | null>(null);
   const [peerShareId, setPeerShareId] = useState<string | null>(null);
   const [peerBridgeDepositAddress, setPeerBridgeDepositAddress] = useState<string | null>(null);
@@ -1394,6 +1400,7 @@ export function BalanceModal({
           platform: platform.processorName,
           currency: peerCurrency,
           payee: zkp2pId,
+          ratePercent: peerFastRef.current ? FAST_RATE_PERCENT : 0,
           signer: sponsoredClient as any,
           // Paying someone else's handle is one order, filled by one person.
           // Deposit is amount + fill incentive; the peer still pays the typed fiat amount.
@@ -2121,13 +2128,25 @@ export function BalanceModal({
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
   const peerReceive = peerPay?.intent === "receive";
-  const peerPayGrossUsd = peerPay ? (peerReceive ? peerPay.amountUsd : cashoutGrossUsdc(peerPay.amountUsd)) : 0;
+  const peerRatePercent = peerFast ? FAST_RATE_PERCENT : 0;
+  const peerPayGrossUsd = peerPay ? (peerReceive ? peerPay.amountUsd : cashoutGrossUsdc(peerPay.amountUsd, peerRatePercent)) : 0;
   const peerPayFeeUsd = peerPay
     ? (peerReceive
-      ? Math.max(0, peerPay.amountUsd - cashoutPayoutUsdc(peerPay.amountUsd))
+      ? Math.max(0, peerPay.amountUsd - cashoutPayoutUsdc(peerPay.amountUsd, peerRatePercent))
       : Math.max(0, peerPayGrossUsd - peerPay.amountUsd))
     : 0;
-  const peerReceiveUsd = peerPay ? (peerReceive ? cashoutPayoutUsdc(peerPay.amountUsd) : peerPay.amountUsd) : 0;
+  const peerReceiveUsd = peerPay ? (peerReceive ? cashoutPayoutUsdc(peerPay.amountUsd, peerRatePercent) : peerPay.amountUsd) : 0;
+  const peerFastSwitch = (
+    <FastDeliverySwitch
+      checked={peerFast}
+      onChange={setPeerFast}
+      disabled={peerSubmitting}
+      dark={dark}
+      estimateLabel={peerEstimate?.eta?.label ?? null}
+      estimateLoading={peerEstimateLoading}
+      extraUsd={peerPay && !peerReceive ? Math.max(0, cashoutGrossUsdc(peerPay.amountUsd, FAST_RATE_PERCENT) - peerPay.amountUsd) : peerPay ? peerPay.amountUsd - cashoutPayoutUsdc(peerPay.amountUsd, FAST_RATE_PERCENT) : undefined}
+    />
+  );
 
   // Private withdrawals debit the sender for amount + fees ON TOP (MagicBlock exactOut) — see
   // PRIVATE_WITHDRAW_FEE_HEADROOM_USDC. This is the real max the form should ever offer/allow.
@@ -2156,7 +2175,7 @@ export function BalanceModal({
     const t = setTimeout(async () => {
       try {
         const { getPeerEstimate: fetchEstimate, usdc } = await import("@/services/peerCash");
-        const estimateUsdc = peerPay?.intent === "receive" ? withdrawAmountNum : peerPay ? cashoutGrossUsdc(withdrawAmountNum) : withdrawAmountNum;
+        const estimateUsdc = peerPay?.intent === "receive" ? withdrawAmountNum : peerPay ? cashoutGrossUsdc(withdrawAmountNum, peerRatePercent) : withdrawAmountNum;
         const est = await fetchEstimate(usdc(estimateUsdc), peerCurrency, platform.processorName, true);
         if (cancelled) return;
         setPeerEstimate({ receiveAmount: est.receiveAmount, eta: est.eta ?? null });
@@ -2169,7 +2188,7 @@ export function BalanceModal({
     }, 400);
 
     return () => { cancelled = true; clearTimeout(t); };
-  }, [withdrawMethod, peerStep, peerPlatformId, peerCurrency, withdrawAmountNum, peerPay]);
+  }, [withdrawMethod, peerStep, peerPlatformId, peerCurrency, withdrawAmountNum, peerPay, peerRatePercent]);
 
   // Quote estimation for cross-chain withdrawals (re-runs when amount changes)
   useEffect(() => {
@@ -2446,7 +2465,7 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Minimum $1", description: "Minimum offramp is $1.00 USDC." });
       return;
     }
-    const depositUsdc = peerPay?.intent === "receive" ? withdrawAmountNum : peerPay ? cashoutGrossUsdc(withdrawAmountNum) : withdrawAmountNum;
+    const depositUsdc = peerPay?.intent === "receive" ? withdrawAmountNum : peerPay ? cashoutGrossUsdc(withdrawAmountNum, peerFastRef.current ? FAST_RATE_PERCENT : 0) : withdrawAmountNum;
     if (depositUsdc > spendableBalance) {
       if (peerPay?.intent === "receive") {
         peerReceiveAutoRef.current = false;
@@ -2525,6 +2544,7 @@ export function BalanceModal({
           baseWalletAddress: baseWalletAddr,
           // Cashing out what you hold: the bridge fee must come out of the amount, not on top of it.
           ...(peerPay?.intent === "receive" ? { coverBridgeFee: true } : {}),
+          ...(peerFastRef.current ? { fast: true } : {}),
         }),
       });
       const prepText = await prepRes.text();
@@ -5092,15 +5112,18 @@ export function BalanceModal({
                       <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>This payment</span>
                       <span className={cn("text-base font-semibold", dark ? "text-white" : "text-gray-900")}>${peerPay.amountUsd.toFixed(2)}</span>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>Fill incentive</span>
-                      <span className={cn("text-base", dark ? "text-slate-300" : "text-gray-700")}>${peerPayFeeUsd.toFixed(2)}</span>
-                    </div>
+                    {peerPayFeeUsd > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>Fast delivery</span>
+                        <span className={cn("text-base", dark ? "text-slate-300" : "text-gray-700")}>${peerPayFeeUsd.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between border-t border-white/10 pt-2">
                       <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>You receive</span>
                       <span className={cn("text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${peerReceiveUsd.toFixed(2)}</span>
                     </div>
                   </div>
+                  {peerFastSwitch}
                   <CashConversion platformId={peerPay.platformId} amountUsd={peerReceiveUsd} dark={dark} />
                   <button
                     type="button"
@@ -5154,15 +5177,18 @@ export function BalanceModal({
                       <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>They receive</span>
                       <span className={cn("text-base font-semibold", dark ? "text-white" : "text-gray-900")}>${peerPay.amountUsd.toFixed(2)}</span>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>Fill incentive</span>
-                      <span className={cn("text-base", dark ? "text-slate-300" : "text-gray-700")}>${peerPayFeeUsd.toFixed(2)}</span>
-                    </div>
+                    {peerPayFeeUsd > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>Fast delivery</span>
+                        <span className={cn("text-base", dark ? "text-slate-300" : "text-gray-700")}>${peerPayFeeUsd.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between border-t border-white/10 pt-2">
                       <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>You pay</span>
                       <span className={cn("text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${peerPayGrossUsd.toFixed(2)}</span>
                     </div>
                   </div>
+                  {peerFastSwitch}
                   <CashConversion platformId={peerPay.platformId} amountUsd={peerPay.amountUsd} dark={dark} />
                   <button
                     type="button"

@@ -27,7 +27,7 @@ export const PARTNERS_FAQ = [
   {
     question: "What does it cost?",
     answer:
-      "Sending is 0.20%, plus $0.10 only when the recipient is new to Loofta. Claiming to a USDC wallet is free for the recipient, and cashing out to Venmo, Cash App, Revolut or Zelle is 2%, paid by the recipient. There is no monthly fee and no setup fee, and we offer custom rates at higher volume.",
+      "Sending is 0.20%, plus $0.10 only when the recipient is new to Loofta. Claiming to a USDC wallet is free for the recipient, and cashing out to Venmo, Cash App, Revolut or Zelle has no Loofta fee. There is no monthly fee and no setup fee, and we offer custom rates at higher volume.",
   },
   {
     question: "Who is this for?",

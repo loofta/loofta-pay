@@ -21,6 +21,8 @@ export async function peerCashout(opts: {
   /** The raw handle: no @ or $. */
   payee: string;
   signer: any;
+  /** Percent under the market rate the market maker keeps. 0 (default) is standard, 1 is fast delivery. */
+  ratePercent?: number;
 }): Promise<{ depositId: string; txHash?: string; accessPolicyTxHash?: string }> {
   const { createCashClient } = await import('@zkp2p/cash');
   const cash = createCashClient({ environment: 'production', referralCode: PEER_REFERRAL_CODE });
@@ -34,7 +36,7 @@ export async function peerCashout(opts: {
     { signer: opts.signer },
   );
   try {
-    await applyFillerIncentive({ depositId: result.depositId, platform: opts.platform, currency: opts.currency, grossAtomicUsdc: opts.grossAtomicUsdc, signer: opts.signer });
+    await applyFillerIncentive({ depositId: result.depositId, platform: opts.platform, currency: opts.currency, grossAtomicUsdc: opts.grossAtomicUsdc, signer: opts.signer, ratePercent: opts.ratePercent ?? 0 });
   } catch (err) {
     // The deposit already exists on-chain. Hand it back with the error so it is still recorded.
     throw Object.assign(err instanceof Error ? err : new Error(String(err)), { cashout: result });
@@ -42,8 +44,8 @@ export async function peerCashout(opts: {
   return result;
 }
 
-async function applyFillerIncentive(opts: { depositId: string; platform: string; currency: string; grossAtomicUsdc: bigint; signer: any }) {
-  const spreadBps = fillerIncentiveSpreadBps(opts.grossAtomicUsdc);
+async function applyFillerIncentive(opts: { depositId: string; platform: string; currency: string; grossAtomicUsdc: bigint; signer: any; ratePercent: number }) {
+  const spreadBps = fillerIncentiveSpreadBps(opts.grossAtomicUsdc, opts.ratePercent);
   if (spreadBps === 0) return;
   const { Zkp2pClient, currencyInfo, getPaymentMethodsCatalog, getSpreadOracleConfig, resolvePaymentMethodHashFromCatalog } = await import('@zkp2p/sdk');
   const oracle: any = getSpreadOracleConfig(opts.currency as never);

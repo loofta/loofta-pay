@@ -67,8 +67,9 @@ describe('quoting a cash-out', () => {
     const { payments } = build();
     const q: any = await payments.cashQuote(session(), REQ);
     expect(q).toMatchObject({ recipient: 'Revolut @lisa1wyj', they_receive_usd: 20, needs_approval: true });
-    expect(q.total_from_wallet_usd).toBeGreaterThan(20.4);
-    expect(q.total_from_wallet_usd).toBeLessThan(21.5);
+    // Loofta takes no fee and the standard rate is free, so only the bridge fee sits on top of the $20.
+    expect(q.total_from_wallet_usd).toBeGreaterThanOrEqual(20);
+    expect(q.total_from_wallet_usd).toBeLessThan(20.5);
   });
   it('refuses a platform or handle it cannot pay', async () => {
     const { payments } = build();

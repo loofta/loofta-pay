@@ -24,6 +24,7 @@ type PendingRecord = {
   amount_usdc: string;
   zkp2p_deposit_id: string | null;
   near_intents_memo?: string | null;
+  rate_percent?: number | string | null;
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -157,6 +158,7 @@ export function useResumePeerCashout(authenticated: boolean, onNeedsManualRetry?
           payee: record.platform_identifier.trim().replace(/^[@$]/, ""),
           signer: signer as any,
           exactFill: false,
+          ratePercent: record.rate_percent != null ? Number(record.rate_percent) : 0,
         });
         let created;
         try {

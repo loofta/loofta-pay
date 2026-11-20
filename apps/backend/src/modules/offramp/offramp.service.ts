@@ -12,7 +12,7 @@ import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { CreateOfframpDto } from './dto/create-offramp.dto';
 import { PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { cashoutFeeAtomic, cashoutLooftaFeeAtomic } from '@/common/offramp-fee';
+import { cashoutFeeAtomic, cashoutLooftaFeeAtomic, FAST_RATE_PERCENT } from '@/common/offramp-fee';
 
 const SOLANA_USDC_MINT_MAINNET = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const BASE_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -218,7 +218,7 @@ export class OfframpService {
         if (attempt >= 3) throw new BadRequestException('This amount is too small to cash out after the bridge fee.');
         // Relay charges its fee on top of the output, so shrink the gross by the overshoot (+ a hair).
         const next = grossUnits - (totalIn - requestedUnits) - 1_000n;
-        if (next <= cashoutFeeAtomic(grossUnits)) {
+        if (next <= cashoutFeeAtomic(grossUnits, dto.fast ? FAST_RATE_PERCENT : 0)) {
           throw new BadRequestException('This amount is too small to cash out after the bridge fee.');
         }
         grossUnits = next;
@@ -254,6 +254,7 @@ export class OfframpService {
       // Share code lives here too, so the public link works before the short_id column exists.
       near_intents_status:          `sid:${shortId}`,
       status:                       'PENDING_BRIDGE',
+      ...(dto.fast ? { rate_percent: FAST_RATE_PERCENT } : {}),
     };
     const client = this.supabase.getClient();
     let { data, error } = await client
@@ -383,7 +384,10 @@ export class OfframpService {
     }
     if (error || !data || data.status === 'DELETED') throw new NotFoundException('Payment not found');
     const platform = String(data.platform);
+    // Separate read so a database without the rate_percent column yet still serves the page.
+    const { data: rateRow } = await client.from('offramp_requests').select('rate_percent').eq('id', data.id).maybeSingle();
     return {
+      ratePercent: rateRow?.rate_percent != null ? Number(rateRow.rate_percent) : null,
       id: data.id as string,
       platform,
       platformName: PLATFORM_NAMES[platform] ?? platform,
@@ -678,7 +682,7 @@ export class OfframpService {
         }
         await this.email.sendCashoutResumeEmail({
           recipientEmail,
-          amountUsd: Number(grossAtomic - cashoutFeeAtomic(grossAtomic)) / 1_000_000,
+          amountUsd: Number(grossAtomic - cashoutFeeAtomic(grossAtomic, Number((row as { rate_percent?: number | string | null }).rate_percent ?? 0))) / 1_000_000,
           platformName: PLATFORM_NAMES[String(row.platform)] ?? String(row.platform),
           identifier: String(row.platform_identifier).replace(/^[@$]/, ''),
           shortId: String(row.short_id),

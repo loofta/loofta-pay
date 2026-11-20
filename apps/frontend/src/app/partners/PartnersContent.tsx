@@ -138,7 +138,7 @@ const PRICING = [
   { what: "Recipient is new to Loofta", who: "You", fee: "$0.10 each" },
   { what: "Private send", who: "You", fee: "$0.20 + 0.20%" },
   { what: "Claim to a USDC wallet", who: "Recipient", fee: "Free" },
-  { what: "Cash out to Venmo, Cash App, Revolut, Zelle", who: "Recipient", fee: "2% (min $0.10)" },
+  { what: "Cash out to Venmo, Cash App, Revolut, Zelle", who: "Recipient", fee: "No Loofta fee" },
   { what: "Cash out to Naira", who: "Recipient", fee: "0.05 to 0.10%" },
 ];
 
@@ -355,7 +355,7 @@ export default function PartnersContent() {
                 <div className="flex items-start justify-between gap-4 py-3">
                   <div>
                     <p className={`text-lg ${t.ink}`}>Recipients cash out $50,000 to Venmo, Cash App, Revolut or Zelle</p>
-                    <p className={`text-base ${t.ink3}`}>2% fee, paid by the recipients</p>
+                    <p className={`text-base ${t.ink3}`}>No Loofta fee on cash-outs</p>
                   </div>
                   <p className={`text-xl font-semibold ${t.ink}`}>$1,000</p>
                 </div>

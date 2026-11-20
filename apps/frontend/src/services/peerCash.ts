@@ -34,74 +34,72 @@ export function getPeerEstimate(amountAtomicUsdc: bigint, currency: string, plat
 }
 
 /**
- * Total fee: 2% of the gross USDC, never under $0.10. The peer always gets a 1% (1 : 0.99) rate on the Base
- * deposit; Loofta keeps the rest of the fee, taken in the Solana bridge transaction by the backend.
+ * Loofta takes no fee on cash-outs and the standard rate is free for the sender. Fast delivery is an option:
+ * the deposit is priced FAST_RATE_PERCENT under the oracle so a market maker keeps that and fills sooner.
+ * All of it goes to the market maker. Loofta earns only its Peer referral share.
  * Keep in sync with backend common/offramp-fee.ts.
  */
-export const CASHOUT_FEE_RATE = 0.02;
-const CASHOUT_MIN_FEE_ATOMIC = 100_000n;
-const PEER_SPREAD_BPS = 100;
+export const FAST_RATE_PERCENT = 1;
 /** Above this, a buyer may take a slice no smaller than this instead of the whole deposit. */
 const MIN_FILL_ATOMIC = 500_000_000n;
+
+const rateBps = (ratePercent: number) => BigInt(Math.round((ratePercent > 0 ? ratePercent : 0) * 100));
 
 /** Whole amount up to $500; above that the smallest allowed fill stays at $500. */
 function exactFillRange(amountAtomicUsdc: bigint) {
   return { min: amountAtomicUsdc > MIN_FILL_ATOMIC ? MIN_FILL_ATOMIC : amountAtomicUsdc, max: amountAtomicUsdc };
 }
 
-/** Total fee the sender pays out of the gross amount. */
-export function cashoutFeeAtomic(amountAtomicUsdc: bigint): bigint {
+/** What the market maker keeps out of the gross amount at this rate (0 for standard). Not a Loofta fee. */
+export function cashoutFeeAtomic(amountAtomicUsdc: bigint, ratePercent = 0): bigint {
   if (amountAtomicUsdc <= 0n) return 0n;
-  const percent = (amountAtomicUsdc * 2n) / 100n;
-  const fee = percent > CASHOUT_MIN_FEE_ATOMIC ? percent : CASHOUT_MIN_FEE_ATOMIC;
-  return fee > amountAtomicUsdc ? amountAtomicUsdc : fee;
+  return (amountAtomicUsdc * rateBps(ratePercent)) / 10_000n;
 }
 
-/** USDC that reaches the Base deposit: sized so the peer's 1% spread leaves exactly gross minus the total fee. */
+/** USDC that reaches the Base deposit: all of it, Loofta keeps nothing. */
 export function cashoutDepositAtomic(grossAtomicUsdc: bigint): bigint {
-  if (grossAtomicUsdc <= 0n) return 0n;
-  const payout = grossAtomicUsdc - cashoutFeeAtomic(grossAtomicUsdc);
-  const deposit = (payout * 10_000n + 9_899n) / 9_900n;
-  return deposit > grossAtomicUsdc ? grossAtomicUsdc : deposit;
+  return grossAtomicUsdc > 0n ? grossAtomicUsdc : 0n;
 }
 
-/** Loofta's share of the fee: whatever isn't the peer's 1%. */
 export function cashoutLooftaFeeAtomic(grossAtomicUsdc: bigint): bigint {
   return grossAtomicUsdc - cashoutDepositAtomic(grossAtomicUsdc);
 }
 
-/** Negative oracle spread on the Base deposit: always 1%, so the peer sends 0.99 per 1 USDC. */
-export function fillerIncentiveSpreadBps(grossAtomicUsdc: bigint): number {
-  return cashoutDepositAtomic(grossAtomicUsdc) > 0n ? -PEER_SPREAD_BPS : 0;
+/** Negative oracle spread for the deposit. 0 at the standard rate, so no repricing is needed. */
+export function fillerIncentiveSpreadBps(grossAtomicUsdc: bigint, ratePercent = 0): number {
+  return cashoutDepositAtomic(grossAtomicUsdc) > 0n && ratePercent > 0 ? -Number(rateBps(ratePercent)) : 0;
 }
 
-export function cashoutPayoutAtomic(amountAtomicUsdc: bigint): bigint {
-  return amountAtomicUsdc - cashoutFeeAtomic(amountAtomicUsdc);
+export function cashoutPayoutAtomic(amountAtomicUsdc: bigint, ratePercent = 0): bigint {
+  return amountAtomicUsdc - cashoutFeeAtomic(amountAtomicUsdc, ratePercent);
 }
 
-/** USDC the sender must deposit so the recipient still gets `payout` after the total fee. */
-export function cashoutGrossAtomic(payoutAtomicUsdc: bigint): bigint {
+/** USDC the sender must deposit so the recipient still gets `payout` after the market maker's share. */
+export function cashoutGrossAtomic(payoutAtomicUsdc: bigint, ratePercent = 0): bigint {
   if (payoutAtomicUsdc <= 0n) return 0n;
-  const withMin = payoutAtomicUsdc + CASHOUT_MIN_FEE_ATOMIC;
-  if (cashoutFeeAtomic(withMin) <= CASHOUT_MIN_FEE_ATOMIC) return withMin;
-  let gross = (payoutAtomicUsdc * 100n) / 98n;
-  while (gross - cashoutFeeAtomic(gross) < payoutAtomicUsdc) gross += 1n;
+  let gross = (payoutAtomicUsdc * 10_000n) / (10_000n - rateBps(ratePercent));
+  while (gross - cashoutFeeAtomic(gross, ratePercent) < payoutAtomicUsdc) gross += 1n;
   return gross;
 }
 
-export function cashoutFeeUsdc(amountUsdc: number): number {
+/** What the recipient gets when the market maker keeps `ratePercent` (0 is the standard). */
+export function cashoutPayoutAtRate(amountUsdc: number, ratePercent?: number | null): number {
   if (!Number.isFinite(amountUsdc) || amountUsdc <= 0) return 0;
-  return Number(cashoutFeeAtomic(BigInt(Math.round(amountUsdc * 1_000_000)))) / 1_000_000;
+  return Number(cashoutPayoutAtomic(BigInt(Math.round(amountUsdc * 1_000_000)), ratePercent ?? 0)) / 1_000_000;
 }
 
-export function cashoutPayoutUsdc(amountUsdc: number): number {
+export function cashoutFeeUsdc(amountUsdc: number, ratePercent = 0): number {
   if (!Number.isFinite(amountUsdc) || amountUsdc <= 0) return 0;
-  return Number(cashoutPayoutAtomic(BigInt(Math.round(amountUsdc * 1_000_000)))) / 1_000_000;
+  return Number(cashoutFeeAtomic(BigInt(Math.round(amountUsdc * 1_000_000)), ratePercent)) / 1_000_000;
 }
 
-export function cashoutGrossUsdc(payoutUsdc: number): number {
+export function cashoutPayoutUsdc(amountUsdc: number, ratePercent = 0): number {
+  return cashoutPayoutAtRate(amountUsdc, ratePercent);
+}
+
+export function cashoutGrossUsdc(payoutUsdc: number, ratePercent = 0): number {
   if (!Number.isFinite(payoutUsdc) || payoutUsdc <= 0) return 0;
-  return Number(cashoutGrossAtomic(BigInt(Math.round(payoutUsdc * 1_000_000)))) / 1_000_000;
+  return Number(cashoutGrossAtomic(BigInt(Math.round(payoutUsdc * 1_000_000)), ratePercent)) / 1_000_000;
 }
 
 export async function peerCashout(opts: {
@@ -115,8 +113,10 @@ export async function peerCashout(opts: {
   signer: WalletClient;
   /** Up to $500 one buyer takes the whole amount; above that, fills are at least $500. */
   exactFill?: boolean;
+  /** Percent under the market rate the market maker keeps. 0 (default) is standard, FAST_RATE_PERCENT is fast. */
+  ratePercent?: number;
 }) {
-  const { amountAtomicUsdc, grossAtomicUsdc, platform, currency, payee, signer, exactFill } = opts;
+  const { amountAtomicUsdc, grossAtomicUsdc, platform, currency, payee, signer, exactFill, ratePercent = 0 } = opts;
   const result = await getPeerCashClient().cashout(
     {
       amount: amountAtomicUsdc,
@@ -132,6 +132,7 @@ export async function peerCashout(opts: {
       currency,
       grossAtomicUsdc,
       signer,
+      ratePercent,
     });
   } catch (err) {
     // The deposit already exists on-chain at this point. Hand it back with the error so a caller can
@@ -148,8 +149,9 @@ async function applyFillerIncentive(opts: {
   currency: string;
   grossAtomicUsdc: bigint;
   signer: WalletClient;
+  ratePercent?: number;
 }) {
-  const spreadBps = fillerIncentiveSpreadBps(opts.grossAtomicUsdc);
+  const spreadBps = fillerIncentiveSpreadBps(opts.grossAtomicUsdc, opts.ratePercent ?? 0);
   if (spreadBps === 0) return;
   const {
     Zkp2pClient,

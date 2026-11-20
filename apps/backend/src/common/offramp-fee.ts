@@ -1,40 +1,37 @@
 /**
- * Fee on Venmo / Cash App / Revolut cash-outs: 2% of the gross USDC, never under $0.10. The peer always gets a
- * 1% (1 : 0.99) rate on the Base deposit; Loofta keeps the rest, taken as a USDC transfer to the fee payer ATA
- * in the Solana bridge transaction. Must stay in sync with apps/frontend/src/services/peerCash.ts.
+ * Cash-outs to Venmo / Cash App / Revolut / Wise / PayPal: Loofta takes no fee, and the standard rate is free for the
+ * sender. Fast delivery is an option: the deposit is priced FAST_RATE_PERCENT under the oracle so a market maker
+ * keeps that and fills sooner. All of it goes to the market maker. Loofta earns only its Peer referral share.
+ * Must stay in sync with apps/frontend/src/services/peerCash.ts.
  */
-const MIN_FEE_ATOMIC = 100_000n;
+export const FAST_RATE_PERCENT = 1;
 
-export function cashoutFeeAtomic(grossAtomic: bigint): bigint {
+const bps = (ratePercent: number) => BigInt(Math.round((ratePercent > 0 ? ratePercent : 0) * 100));
+
+/** What the market maker keeps out of the gross amount at this rate (0 for standard). Not a Loofta fee. */
+export function cashoutFeeAtomic(grossAtomic: bigint, ratePercent = 0): bigint {
   if (grossAtomic <= 0n) return 0n;
-  const percent = (grossAtomic * 2n) / 100n;
-  const fee = percent > MIN_FEE_ATOMIC ? percent : MIN_FEE_ATOMIC;
-  return fee > grossAtomic ? grossAtomic : fee;
+  return (grossAtomic * bps(ratePercent)) / 10_000n;
 }
 
-/** Base deposit size: the peer's 1% spread then leaves exactly gross minus the total fee. */
+/** Base deposit size: the whole amount, since Loofta keeps nothing. */
 export function cashoutDepositAtomic(grossAtomic: bigint): bigint {
-  if (grossAtomic <= 0n) return 0n;
-  const payout = grossAtomic - cashoutFeeAtomic(grossAtomic);
-  const deposit = (payout * 10_000n + 9_899n) / 9_900n;
-  return deposit > grossAtomic ? grossAtomic : deposit;
+  return grossAtomic > 0n ? grossAtomic : 0n;
 }
 
 export function cashoutLooftaFeeAtomic(grossAtomic: bigint): bigint {
   return grossAtomic - cashoutDepositAtomic(grossAtomic);
 }
 
-/** USDC the sender must put in so the recipient still gets `payout` after the total fee. */
-export function cashoutGrossAtomic(payoutAtomic: bigint): bigint {
+/** USDC the sender must put in so the recipient still gets `payout` after the market maker's share. */
+export function cashoutGrossAtomic(payoutAtomic: bigint, ratePercent = 0): bigint {
   if (payoutAtomic <= 0n) return 0n;
-  const withMin = payoutAtomic + MIN_FEE_ATOMIC;
-  if (cashoutFeeAtomic(withMin) <= MIN_FEE_ATOMIC) return withMin;
-  let gross = (payoutAtomic * 100n) / 98n;
-  while (gross - cashoutFeeAtomic(gross) < payoutAtomic) gross += 1n;
+  let gross = (payoutAtomic * 10_000n) / (10_000n - bps(ratePercent));
+  while (gross - cashoutFeeAtomic(gross, ratePercent) < payoutAtomic) gross += 1n;
   return gross;
 }
 
-/** The deposit is priced 1% under the oracle so a peer sends less fiat; the sender already covered that gap. */
-export function fillerIncentiveSpreadBps(grossAtomic: bigint): number {
-  return cashoutDepositAtomic(grossAtomic) > 0n ? -100 : 0;
+/** Negative oracle spread for the deposit. 0 at the standard rate, so no repricing is needed. */
+export function fillerIncentiveSpreadBps(grossAtomic: bigint, ratePercent = 0): number {
+  return cashoutDepositAtomic(grossAtomic) > 0n && ratePercent > 0 ? -Number(bps(ratePercent)) : 0;
 }

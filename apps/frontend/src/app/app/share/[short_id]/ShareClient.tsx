@@ -11,7 +11,7 @@ import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail, 
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
 import { SocialPlatformIcon, type SocialIconPlatform } from '@/components/SocialPlatformIcon'
 import { getPlatform } from '@/lib/peerPlatforms'
-import { cashoutPayoutUsdc } from '@/services/peerCash'
+import { cashoutPayoutAtRate } from '@/services/peerCash'
 import confetti from 'canvas-confetti'
 
 interface SharePaymentPreview {
@@ -43,6 +43,7 @@ type CashPayShare = {
   identifier: string
   currency: string
   amountUsdc: number
+  ratePercent?: number | null
   status: string
   etaLabel: string | null
 }
@@ -63,7 +64,7 @@ function CashPayShareCard({ payment }: { payment: CashPayShare }) {
   }, [payment.etaLabel, payment.amountUsdc, payment.currency, payment.platform])
   const arrived = payment.status === 'COMPLETE' || payment.status === 'SUCCESS'
   const cancelled = payment.status === 'CANCELLED'
-  const receive = cashoutPayoutUsdc(payment.amountUsdc)
+  const receive = cashoutPayoutAtRate(payment.amountUsdc, payment.ratePercent)
   const amount = receive % 1 === 0 ? `$${receive}` : `$${receive.toFixed(2)}`
   const handle = payment.identifier.replace(/^[@$]/, '')
   const logo = getPlatform(payment.platform)?.logo
