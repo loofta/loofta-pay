@@ -1,4 +1,4 @@
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from './auth.guard';
@@ -18,6 +18,7 @@ function makePrivyService(overrides: Partial<PrivyVerificationService> = {}): je
     verifyAccessToken: jest.fn().mockResolvedValue(VALID_USER_ID),
     verifyUserId: jest.fn().mockResolvedValue(true),
     getPrivyUser: jest.fn().mockResolvedValue(null),
+    hasVerifiedIdentity: jest.fn().mockResolvedValue(true),
   } as unknown as jest.Mocked<PrivyVerificationService>;
 }
 
@@ -55,6 +56,21 @@ describe('AuthGuard', () => {
     }).compile();
 
     guard = module.get(AuthGuard);
+  });
+
+  // Wallet-only accounts are free to mint in bulk and were used to drain the fee payer (2026-11-20)
+  describe('verified identity requirement', () => {
+    it('rejects a wallet-only account with 403', async () => {
+      privy.hasVerifiedIdentity.mockResolvedValue(false);
+      const ctx = makeContext({ authorization: `Bearer ${VALID_TOKEN}` });
+      await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lets an account with an email or social login through', async () => {
+      privy.hasVerifiedIdentity.mockResolvedValue(true);
+      const ctx = makeContext({ authorization: `Bearer ${VALID_TOKEN}` });
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    });
   });
 
   // Bearer JWT path

@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId, getPrivyUser, getVerifiedLiveTwitterProfile } from "@/lib/serverAuth";
 import { generateUniqueLooUsername, getTwitterHandleFromLinkedAccounts } from "@/lib/looUsername";
 import { redisGet, redisSet } from "@/lib/redis-cache";
+import { isDisposableEmail } from "@/lib/disposableEmail";
 
 const USER_PREFS_TTL = 60 * 60 * 24; // 24h
 function userPrefsKey(privyUserId: string) { return `user:prefs:${privyUserId}`; }
@@ -18,6 +19,18 @@ export async function POST(request: NextRequest) {
   }
   try {
     const { email } = await request.json();
+
+    // Block one-time email providers. Checked against the email Privy has on file (never the
+    // client-supplied body), and before the cache fast path so existing accounts are covered too.
+    const privyForEmail = await getPrivyUser(privyUserId);
+    const privyEmail = ((privyForEmail?.linkedAccounts ?? []) as Array<{ type: string; address?: string }>)
+      .find((a) => a.type === "email")?.address;
+    if (isDisposableEmail(privyEmail) || isDisposableEmail(email)) {
+      return NextResponse.json(
+        { error: "disposable_email", message: "Temporary email addresses are not allowed. Please sign in with a permanent email." },
+        { status: 403 },
+      );
+    }
 
     // Fast path: Redis cache with full user object (avoids DB hit on every page load, cross-device)
     const cached = await redisGet(userPrefsKey(privyUserId));

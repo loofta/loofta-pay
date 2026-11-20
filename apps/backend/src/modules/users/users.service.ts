@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { isDisposableEmail } from '@/common/disposable-email';
 import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
@@ -223,6 +224,8 @@ export class UsersService {
     const telegramHandle = telegramAccount
       ? String(telegramAccount.username ?? '').replace(/^@/, '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16) || null
       : null;
+
+    if (isDisposableEmail(email)) throw new ForbiddenException('Temporary email addresses are not allowed.');
 
     const looHandle = twitterHandle
       ?? telegramHandle

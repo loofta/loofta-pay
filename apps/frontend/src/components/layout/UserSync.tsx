@@ -14,7 +14,7 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
  * Renders no UI; keeps auth state and username/onboarding modals working alongside MinimalHeader.
  */
 export function UserSync({ suppressOnboarding = false }: { suppressOnboarding?: boolean } = {}) {
-  const { authenticated, email, userId, getAccessToken } = useAuth();
+  const { authenticated, email, userId, getAccessToken, logout } = useAuth();
   const { user: privyUser, ready: privyReady } = usePrivy();
   const { createWallet } = useCreateWallet();
   const username = useAuthStore((s) => s.username ?? null);
@@ -84,6 +84,14 @@ export function UserSync({ suppressOnboarding = false }: { suppressOnboarding?: 
             },
             body: JSON.stringify({ email }),
           });
+          if (userResponse.status === 403) {
+            const body = await userResponse.json().catch(() => null);
+            if (body?.error === "disposable_email") {
+              alert(body.message || "Temporary email addresses are not allowed.");
+              await logout();
+              return;
+            }
+          }
           if (!userResponse.ok) continue;
           userData = await userResponse.json();
           if (userData?.user) break;
