@@ -7,7 +7,8 @@ import {
   Optional,
   ForbiddenException,
 } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
+import { Reflector, ModuleRef } from '@nestjs/core';
+import { ensureAppUserRow } from './ensure-app-user';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { SupabaseService } from '@/database/supabase.service';
 import { ALLOW_WALLET_ONLY_KEY } from './allow-wallet-only';
@@ -30,6 +31,7 @@ export class AuthGuard implements CanActivate {
   constructor(
     private readonly privy: PrivyVerificationService,
     private readonly reflector: Reflector,
+    private readonly moduleRef: ModuleRef,
     @Optional() private readonly supabase?: SupabaseService,
   ) {}
 
@@ -68,6 +70,8 @@ export class AuthGuard implements CanActivate {
       if (!userId) {
         throw new UnauthorizedException('Invalid or expired token');
       }
+      const allowWalletOnlyRoute = this.reflector.getAllAndOverride<boolean>(ALLOW_WALLET_ONLY_KEY, [context.getHandler(), context.getClass()]);
+      if (!allowWalletOnlyRoute) await ensureAppUserRow(this.moduleRef, userId, request);
       if (await this.isSuspended(userId)) {
         throw new ForbiddenException('Your account has been suspended. Contact hello@loofta.xyz.');
       }
