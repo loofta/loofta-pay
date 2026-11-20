@@ -151,3 +151,25 @@
 .t-top a.pill:hover { background: #f2f2f4; }
 .stats3 { margin-top: 0; }
 @media (max-width: 860px) { .t-bar { grid-template-columns: 1fr auto; } .t-bar .stats3 { display: none; } }
+
+.t-two { display: grid; grid-template-columns: 1.1fr 1fr; gap: 22px; }
+.t-count { display: none; font-size: 14px; color: #86868b; font-variant-numeric: tabular-nums; }
+.t-btn { white-space: nowrap; }
+@media (max-width: 860px) {
+  .t-two { grid-template-columns: 1fr; }
+  .t-top { padding: 16px 20px; }
+  .t-body { padding: 0 20px; }
+  .t-bar { grid-template-columns: auto 1fr; padding: 12px 20px 22px; gap: 12px; background: linear-gradient(to top, #fafafb 70%, rgba(250,250,251,0)); }
+  .t-bar .t-dots { display: none; }
+  .t-count { display: block; }
+  .t-bar .t-btn { padding: 13px 22px; font-size: 16px; }
+  .t-bar > div:last-child { gap: 8px !important; }
+  .t-h { font-size: clamp(32px, 9vw, 44px); }
+  .t-p { font-size: 17px; }
+  .t-step { padding-bottom: 12px; }
+  .t-frame { border-radius: 16px; }
+  .t-pad { padding: 18px; }
+  .t-top a { padding: 6px 8px; }
+  .t-top a.pill { padding: 8px 14px; }
+}
+@media (max-width: 700px) { .t-eyebrow { margin-bottom: 10px; } .center .t-h { font-size: clamp(38px, 11vw, 52px); } }

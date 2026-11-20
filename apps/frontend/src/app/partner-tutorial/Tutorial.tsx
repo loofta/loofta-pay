@@ -98,7 +98,21 @@ const PEOPLE: Array<[string, string, number, string, number, number]> = [
   ["R", "ravi.s@yahoo.com", 40, "#7C7CFF", 470, 125],
 ];
 
+/** True on phone-sized screens, where the first page uses a narrower arrangement. */
+function useCompact() {
+  const [c, setC] = useState(false);
+  useEffect(() => {
+    const m = window.matchMedia("(max-width: 700px)");
+    const f = () => setC(m.matches);
+    f();
+    m.addEventListener("change", f);
+    return () => m.removeEventListener("change", f);
+  }, []);
+  return c;
+}
+
 function IntroStage() {
+  const compact = useCompact();
   const wrap = useRef<HTMLDivElement>(null);
   const [t, setT] = useState(0);
   const [scale, setScale] = useState(1);
@@ -109,7 +123,9 @@ function IntroStage() {
       const el = wrap.current;
       const w = el ? el.clientWidth : 1240;
       const h = el ? el.clientHeight : 420;
-      setScale(Math.min(1, (w - 32) / 1240, (h - 8) / 420));
+      const vw = compact ? 360 : 1240;
+      const vh = compact ? 540 : 420;
+      setScale(Math.min(1, (w - 16) / vw, (h - 8) / vh));
     };
     fit();
     const ro = new ResizeObserver(fit);
@@ -118,14 +134,17 @@ function IntroStage() {
       window.clearInterval(iv);
       ro.disconnect();
     };
-  }, []);
+  }, [compact]);
 
   const press = 1000;
   const fly = 900;
   const out = t > 8200;
   let total = 0;
   let sent = 0;
-  const chips = PEOPLE.map(([initial, email, amt, color, x, y], i) => {
+  const COMPACT_POS: Array<[number, number]> = [[-92, -218], [92, -148], [-92, -148], [92, -218], [-92, 148], [92, 218], [-92, 218], [92, 148]];
+  const chips = PEOPLE.map(([initial, email, amt, color, x0, y0], i) => {
+    const x = compact ? COMPACT_POS[i][0] : x0;
+    const y = compact ? COMPACT_POS[i][1] : y0;
     const l = 1250 + i * 190;
     const launched = t > l;
     const landed = t > l + fly * 0.7;
@@ -142,13 +161,13 @@ function IntroStage() {
   const pressing = t > press && t < press + 180;
   const sending = t > press && !done;
   return (
-    <div ref={wrap} style={{ position: "relative", flex: "1 1 0", minHeight: 0, width: "100%", height: "min(42vh, 420px)", display: "flex", justifyContent: "center", alignItems: "center" }}>
-      <div style={{ position: "absolute", left: "50%", top: "50%", width: 1120, height: 420, transform: `translate(-50%,-50%) scale(${scale})`, transformOrigin: "center" }}>
+    <div ref={wrap} style={{ position: "relative", flex: "1 1 0", minHeight: 0, width: "100%", height: compact ? "clamp(380px, calc(100dvh - 400px), 560px)" : "min(42vh, 420px)", display: "flex", justifyContent: "center", alignItems: "center" }}>
+      <div style={{ position: "absolute", left: "50%", top: "50%", width: compact ? 360 : 1120, height: compact ? 540 : 420, transform: `translate(-50%,-50%) scale(${scale})`, transformOrigin: "center" }}>
         {chips.map((c) => (
           <div
             key={c.email}
             style={{
-              position: "absolute", left: "50%", top: "50%", width: 240, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 11, padding: "10px 14px 10px 10px", borderRadius: 999,
+              position: "absolute", left: "50%", top: "50%", width: compact ? 168 : 240, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 11, padding: "10px 14px 10px 10px", borderRadius: 999,
               background: "rgba(255,255,255,0.82)", backdropFilter: "blur(18px)", border: "1px solid rgba(0,0,0,0.05)", boxShadow: "0 14px 34px -14px rgba(40,25,15,0.22)",
               opacity: c.launched && !out ? 1 : 0,
               transform: c.launched ? `translate(calc(-50% + ${c.x}px), calc(-50% + ${c.y}px)) scale(${out ? 0.94 : 1})` : "translate(-50%,-50%) scale(0.6)",
@@ -157,7 +176,7 @@ function IntroStage() {
           >
             <div style={{ width: 36, height: 36, flexShrink: 0, borderRadius: "50%", background: c.color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 600 }}>{c.initial}</div>
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", textAlign: "left" }}>
-              <div style={{ fontSize: 12, color: "#86868B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.email}</div>
+              <div style={{ fontSize: 12, color: "#86868B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{compact ? c.email.split("@")[0] : c.email}</div>
               <div style={{ fontSize: 16, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: c.landed ? "#1F9D55" : "#AEAEB2", transition: "color 400ms ease" }}>+${c.amt}</div>
             </div>
             <div style={{ width: 22, height: 22, flexShrink: 0, borderRadius: "50%", background: "#1F9D55", display: "flex", alignItems: "center", justifyContent: "center", transform: `scale(${c.landed ? 1 : 0})`, opacity: c.landed ? 1 : 0, transition: "transform 420ms cubic-bezier(.3,1.7,.5,1), opacity 200ms ease" }}>
@@ -245,7 +264,7 @@ function Setup({ c }: { c: Ctx }) {
   return (
     <div className="t-stage">
       <Browser url="pay.loofta.com/partner/portal" dark>
-        <div className="t-pad" style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 22 }}>
+        <div className="t-pad t-two">
           <div>
             <div className="lbl" style={{ marginTop: 0 }}>Name</div>
             <div className={`field ${name.length < c.s.brand.length ? "caret" : ""}`}>{name}</div>
@@ -524,6 +543,7 @@ export function Tutorial() {
         )}
       </div>
       <div className="t-bar">
+        <div className="t-count">{i + 1} / {total}</div>
         <div className="t-dots">
           {Array.from({ length: total }).map((_, n) => <button key={n} aria-label={`Step ${n + 1}`} className={n === i ? "on" : ""} onClick={() => go(n)} />)}
         </div>
