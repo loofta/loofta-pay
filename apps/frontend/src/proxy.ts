@@ -90,6 +90,7 @@ export function proxy(request: NextRequest) {
     "/giveaways",
     "/rewards-rail",
     "/partners",
+    "/partner-tutorial",
     "/business",
     "/fomo",
     "/guides/send-crypto-privately",

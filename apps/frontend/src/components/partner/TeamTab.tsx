@@ -47,7 +47,7 @@ export function TeamTab({ orgId, myRole, myUserId }: { orgId: string; myRole: Pa
   const invite = () =>
     run(async () => {
       const r = await call<{ token: string }>(`${base}/members/invite`, post({ email, role }));
-      setLink(`${window.location.origin}/app/partner?invite=${encodeURIComponent(r.token)}`);
+      setLink(`${window.location.origin}/partner/portal?invite=${encodeURIComponent(r.token)}`);
       setEmail("");
     });
 

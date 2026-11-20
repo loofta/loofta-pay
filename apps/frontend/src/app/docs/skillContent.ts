@@ -318,7 +318,7 @@ API sends money.
 
 ## 1. One-time setup (the user does this, an agent cannot)
 
-1. Create an organisation at https://pay.loofta.com/app/partner and sign in with email.
+1. Create an organisation at https://pay.loofta.com/partner/portal and sign in with email.
 2. Create the company wallet under Wallet, then add USDC to it.
 3. Under Developers, create an API key (starts with \`lft_live_\`) and switch on "Pay in bulk from your
    platform". Only an owner can switch it on. It is off by default.

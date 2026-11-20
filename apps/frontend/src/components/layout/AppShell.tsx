@@ -29,7 +29,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   // The partner withdraw page (recipients land here from a partner's app): no Loofta header,
   // footer or promo toasts, just the partner-branded page itself. Login still works through Privy.
   // The partner portal is a standalone product page for businesses, so it skips the chrome too.
-  const isEmbed = pathname === '/withdraw' || pathname === '/app/withdraw' || pathname === '/partner' || pathname === '/app/partner';
+  const isEmbed = pathname === '/withdraw' || pathname === '/app/withdraw' || /^\/(app\/)?partner(\/|$)/.test(pathname ?? '');
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
   // Loofta Rewards is a full-page spec with its own header. The app rewrite serves it at
   // /rewards-rail (internally /app/rewards-rail), so both shapes need to skip this chrome.

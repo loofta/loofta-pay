@@ -106,6 +106,7 @@ export function PartnerShell({
   onLogout,
   username,
   email,
+  centered,
   children,
 }: {
   orgs: Org[];
@@ -121,6 +122,8 @@ export function PartnerShell({
   onLogout: () => void;
   username: string | null;
   email: string | undefined;
+  /** Centre the content, for the public landing page. */
+  centered?: boolean;
   children: ReactNode;
 }) {
   const showSidebar = signedIn && !!current;
@@ -207,7 +210,7 @@ export function PartnerShell({
         )}
 
         <main className="min-w-0 flex-1 px-[clamp(18px,4vw,56px)] pb-16 pt-[clamp(24px,4vw,48px)]">
-          <div className="flex max-w-[960px] flex-col">
+          <div className={`flex max-w-[960px] flex-col ${centered ? "mx-auto" : ""}`}>
             {showSidebar && (
               <div className="mb-6 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
                 {GROUPS.flatMap((g) => g.items).map((it) => (

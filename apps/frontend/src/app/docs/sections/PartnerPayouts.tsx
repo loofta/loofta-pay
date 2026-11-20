@@ -19,7 +19,7 @@ export function PartnerPayouts({ onNavigate }: { onNavigate: (slug: string) => v
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">1. Set it up once</h2>
       <ol className="list-decimal pl-5 space-y-2 text-base text-slate-400 mb-4">
-        <li>Open the partner portal at <code className="text-orange-300">pay.loofta.com/app/partner</code> and create your organisation.</li>
+        <li>Open the partner portal at <code className="text-orange-300">pay.loofta.com/partner/portal</code> and create your organisation.</li>
         <li>Create your company wallet under Wallet and add some USDC to it.</li>
         <li>
           Under Developers, create an API key (it starts with <code className="text-orange-300">lft_live_</code>), then
@@ -81,7 +81,7 @@ console.log(batch.approveUrl);`}
   "status": "pending_approval",
   "item_count": 1,
   "total_amount": 120,
-  "approve_url": "https://pay.loofta.xyz/app/partner?org=org_...&tab=payouts&batch=6f1c0a52-...",
+  "approve_url": "https://pay.loofta.com/partner/portal?org=org_...&tab=payouts&batch=6f1c0a52-...",
   "items": [
     { "row_index": 0, "recipient_identifier": "alice@example.com", "amount": 120, "external_ref": "user_42", "status": "queued" }
   ]
