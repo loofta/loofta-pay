@@ -11,8 +11,11 @@ import type { WalletClient } from "viem";
 
 let client: CashClient | null = null;
 
+/** Loofta's Peer referral code: stamps every deposit so Peer's curator routes the integration share to us on fill. */
+export const PEER_REFERRAL_CODE = "9H9O8L";
+
 export function getPeerCashClient(): CashClient {
-  if (!client) client = createCashClient({ environment: "production" });
+  if (!client) client = createCashClient({ environment: "production", referralCode: PEER_REFERRAL_CODE });
   return client;
 }
 

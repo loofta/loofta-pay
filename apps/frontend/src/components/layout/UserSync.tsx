@@ -119,22 +119,33 @@ export function UserSync({ suppressOnboarding = false }: { suppressOnboarding?: 
           // Onboarding (add-email, then welcome flow) shows after login; no separate username modal
         }
 
-        // Telegram signups/logins only link the handle on the Privy user. Payments sent to a
-        // Telegram handle (history, unclaimed nudge) are found through social_accounts, so save it
-        // there (server re-verifies it against Privy). Once per user + handle per session.
-        const tgAccount = ((privyUser?.linkedAccounts || []) as Array<{ type?: string; username?: string | null }>).find(
-          (a) => a.type === "telegram" || a.type === "telegram_oauth",
-        );
-        const tgHandle = tgAccount?.username?.replace(/^@/, "").toLowerCase().trim();
-        const tgKey = tgHandle ? `loofta_tg_synced_${userId}_${tgHandle}` : null;
-        if (tgHandle && tgKey && sessionStorage.getItem(tgKey) !== "1") {
+        // Telegram / Discord / GitHub logins only link the handle on the Privy user. Payments sent to
+        // a handle (pay-target lookup, history, unclaimed nudge) are found through social_accounts,
+        // so save it there (the server re-verifies it against Privy). Once per user + handle per
+        // session. Without this a Discord login is "not registered" and the sender is charged the
+        // claim fee.
+        const linked = (privyUser?.linkedAccounts || []) as Array<{ type?: string; username?: string | null; name?: string | null }>;
+        const SYNC: Array<{ platform: "telegram" | "discord" | "github"; types: string[] }> = [
+          { platform: "telegram", types: ["telegram", "telegram_oauth"] },
+          { platform: "discord", types: ["discord", "discord_oauth"] },
+          { platform: "github", types: ["github", "github_oauth"] },
+        ];
+        for (const { platform, types } of SYNC) {
+          const account = linked.find((a) => types.includes(a.type || ""));
+          const handle = (account?.username || account?.name || "")
+            .replace(/^@/, "")
+            .replace(/#\d+$/, "")
+            .toLowerCase()
+            .trim();
+          const key = handle ? `loofta_${platform}_synced_${userId}_${handle}` : null;
+          if (!handle || !key || sessionStorage.getItem(key) === "1") continue;
           const token = await getAccessToken();
           const res = await fetch("/api/users/save-social-handle", {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-            body: JSON.stringify({ platform: "telegram", handle: tgHandle }),
+            body: JSON.stringify({ platform, handle }),
           });
-          if (res.ok || res.status === 409) sessionStorage.setItem(tgKey, "1");
+          if (res.ok || res.status === 409) sessionStorage.setItem(key, "1");
         }
       } catch (error) {
         console.error("[UserSync] Error checking user:", error);

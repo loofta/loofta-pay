@@ -5,6 +5,9 @@
  */
 import { fillerIncentiveSpreadBps } from './offramp-fee';
 
+/** Loofta's Peer referral code: stamps every deposit so Peer's curator routes the integration share to us on fill. */
+const PEER_REFERRAL_CODE = '9H9O8L';
+
 /** Above this, a buyer may take a slice no smaller than this instead of the whole deposit. */
 const MIN_FILL_ATOMIC = 500_000_000n;
 
@@ -20,7 +23,7 @@ export async function peerCashout(opts: {
   signer: any;
 }): Promise<{ depositId: string; txHash?: string; accessPolicyTxHash?: string }> {
   const { createCashClient } = await import('@zkp2p/cash');
-  const cash = createCashClient({ environment: 'production' });
+  const cash = createCashClient({ environment: 'production', referralCode: PEER_REFERRAL_CODE });
   const result: any = await cash.cashout(
     {
       amount: opts.amountAtomicUsdc,
@@ -60,7 +63,7 @@ async function applyFillerIncentive(opts: { depositId: string; platform: string;
 /** Takes the unfilled USDC back out of the Peer escrow into the signing wallet. */
 export async function peerWithdraw(depositId: string, signer: any) {
   const { createCashClient } = await import('@zkp2p/cash');
-  const cash = createCashClient({ environment: 'production' });
+  const cash = createCashClient({ environment: 'production', referralCode: PEER_REFERRAL_CODE });
   try {
     return await cash.withdraw(depositId, { signer });
   } catch (err) {

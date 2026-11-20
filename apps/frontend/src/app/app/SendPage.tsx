@@ -36,6 +36,8 @@ import { useTranslations } from "next-intl";
 import { useToast } from "@/components/ui/use-toast";
 import { SolanaWalletConnectProvider } from "@/components/SolanaWalletConnect";
 import { DirectWalletPayPanel } from "@/components/app/DirectWalletPayPanel";
+import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
+import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { isValidSolanaAddress } from "@/lib/refundAddresses";
 import { useSolDomain } from "@/hooks/useSolDomain";
@@ -104,6 +106,7 @@ export default function Home() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { authenticated } = useAuth();
+  const { balanceUSD: looftaBalanceUsd, isLoading: looftaBalanceLoading } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated === true });
   const username = useAuthStore((s) => s.username ?? null);
   const networkMode = useAuthStore((s) => s.networkMode);
   // Own identifiers, for the self-send guard in handleSend below — never let a signed-in sender
@@ -1002,6 +1005,12 @@ export default function Home() {
                           ? raw.replace(/^loo-/, "").replace(/[^a-z0-9_-]/gi, "")
                           : raw.replace(/^@+/, "").trimStart();
                         setRecipient(trimmed);
+                        // A pasted wallet address is not a handle: move to the Wallet tab instead of
+                        // creating a claim for it as if it were an X username.
+                        if (sendMethod !== "username" && trimmed.length >= 32 && isValidSolanaAddress(trimmed.trim())) {
+                          setDestKind("wallet");
+                          setRecipient(trimmed.trim());
+                        }
                       }}
                       onKeyDown={(e) => { if (!suggestionNav.onKeyDown(e) && e.key === "Escape") setRecipientFocused(false); }}
                         onFocus={() => setRecipientFocused(true)}
@@ -1145,6 +1154,44 @@ export default function Home() {
                       A peer pays that handle in USD. Getting your USDC back costs a bridge fee.
                     </p>
                     </>
+                  ) : destKind === "wallet" && !lockedRecipient && authenticated ? (
+                    (() => {
+                      const walletBlocker =
+                        amountNum < minAmountUsd
+                          ? `Enter an amount of at least $${minAmountUsd}`
+                          : !walletAddress
+                            ? "Enter a wallet address"
+                            : !walletAddressValid
+                              ? walletDomain.status === "resolving" ? "Looking up name…" : walletDomain.status === "not-found" ? "That .sol name does not resolve" : "Not a valid Solana address"
+                              : null;
+                      const needed = isPrivateMode ? totalWithMagicBlockPrivateFee(amountNum) : amountNum;
+                      const hasBalance = looftaBalanceUsd >= needed;
+                      if (!walletBlocker && !looftaBalanceLoading && !hasBalance) {
+                        return <InsufficientBalanceCard balanceUSD={looftaBalanceUsd} neededUSD={needed} />;
+                      }
+                      return (
+                        <>
+                        <GradientActionButton
+                          disabled={!!walletBlocker || looftaBalanceLoading}
+                          title={walletBlocker ?? undefined}
+                          onClick={() => {
+                            if (walletBlocker) return;
+                            window.dispatchEvent(new CustomEvent("openBalanceModal", {
+                              detail: {
+                                tab: "withdraw",
+                                method: "solana",
+                                cryptoPrefill: { symbol: "USDC", chain: "solana", address: walletAddressValid ? walletAddress : "", amountUsd: amountNum, private: isPrivateMode },
+                              },
+                            }));
+                          }}
+                        >
+                          {walletBlocker ?? (looftaBalanceLoading
+                            ? "Checking your balance…"
+                            : isPrivateMode ? `Pay $${needed.toFixed(2)} privately` : `Pay $${amountNum}`)}
+                        </GradientActionButton>
+                        </>
+                      );
+                    })()
                   ) : destKind === "wallet" && !lockedRecipient ? (
                     <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
                       <DirectWalletPayPanel

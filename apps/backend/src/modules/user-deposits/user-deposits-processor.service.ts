@@ -54,7 +54,8 @@ export class UserDepositsProcessorService {
     // still gets corrected to its real outcome instead of being permanently excluded.
     const { data, error } = await this.supabaseService.userDeposits
       .select('id, deposit_address, status')
-      .eq('type', 'near-intents')
+      // peer-pay settles into a one-time Near Intents address too, so the same status poll completes it.
+      .in('type', ['near-intents', 'peer-pay'])
       .in('status', ['pending', 'cancelled'])
       .not('deposit_address', 'is', null)
       .limit(BATCH_LIMIT);

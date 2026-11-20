@@ -105,9 +105,9 @@ function History({ items }: { items: HistoryItem[] }) {
           <li key={h.payment_id} className="flex items-center justify-between gap-3 py-3">
             <span className="min-w-0">
               <span className="block truncate text-base text-white">{h.message || "Payout"}</span>
-              <span className="block text-sm text-[#8A8893]">Sent {dayFmt(h.withdrawn_at)}{h.partner_fee_usdc > 0 ? ` · fee ${usd(h.partner_fee_usdc)}` : ""}</span>
+              <span className="block text-sm text-[#8A8893]">Sent {dayFmt(h.withdrawn_at)}</span>
             </span>
-            <span className="shrink-0 text-base font-semibold text-white">{usd(h.amount - h.partner_fee_usdc)}</span>
+            <span className="shrink-0 text-base font-semibold text-white">{usd(h.amount)}</span>
           </li>
         ))}
       </ul>
