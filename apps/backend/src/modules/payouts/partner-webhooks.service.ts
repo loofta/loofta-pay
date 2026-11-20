@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { createHmac, randomBytes } from 'crypto';
 import { SupabaseService } from '@/database/supabase.service';
-import { assertSafePublicUrl } from '@/common/assert-safe-public-url';
+import { assertSafePublicUrl, assertSafePublicUrlResolved } from '@/common/assert-safe-public-url';
 
 // Retry schedule in seconds after each failed attempt; after the last one the event is marked failed.
 const BACKOFF_SECONDS = [60, 300, 1800, 7200, 21600, 86400];
@@ -77,7 +77,9 @@ export class PartnerWebhooksService {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8_000);
+      await assertSafePublicUrlResolved(settings.webhook_url as string, 'webhook url');
       const res = await fetch(settings.webhook_url as string, {
+        redirect: 'manual',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

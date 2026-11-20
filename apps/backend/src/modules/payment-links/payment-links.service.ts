@@ -1,3 +1,4 @@
+import { assertSafePublicUrl } from '@/common/assert-safe-public-url';
 import { Injectable, Logger, BadRequestException, ServiceUnavailableException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
@@ -88,6 +89,7 @@ export class PaymentLinksService {
     // Shown once in the response, same convention as the API key itself — only its value is
     // needed later (to sign each outgoing webhook), so nothing is lost by not storing it in
     // plaintext anywhere retrievable via the API.
+    if (dto.webhook_url) assertSafePublicUrl(dto.webhook_url, 'webhook_url');
     const webhookSecret = dto.webhook_url ? randomBytes(24).toString('hex') : null;
 
     const shortId = generateShortId();

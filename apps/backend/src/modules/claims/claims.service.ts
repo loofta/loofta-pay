@@ -1,3 +1,4 @@
+import { assertSafePublicUrlResolved } from '@/common/assert-safe-public-url';
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createCipheriv, createDecipheriv, randomBytes, createHmac } from 'crypto';
@@ -4163,11 +4164,13 @@ export class ClaimsService {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8_000);
+        await assertSafePublicUrlResolved(webhookUrl, 'webhook url');
         const res = await fetch(webhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Loofta-Signature': `sha256=${signature}` },
           body: payload,
           signal: controller.signal,
+          redirect: 'manual',
         });
         clearTimeout(timeout);
         if (res.ok) {

@@ -47,6 +47,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Brand/staff handles can never be self-claimed (an account named looftapay impersonated the
+    // official sender in the admin list and on payment pages, 2026-11-20).
+    if (/^(loofta|looftapay|looftaxyz|loofta-?pay|loofta-?team|loofta-?support|admin|support|official|staff|team)$/.test(normalized.replace(/^loo-/, ""))) {
+      return NextResponse.json({ error: "This username is reserved." }, { status: 403 });
+    }
+
     // Non-loo usernames must match the user's actual linked Twitter/X handle.
     // Prevents anyone from claiming a Twitter username they don't own.
     if (!isLoo) {
@@ -58,7 +64,7 @@ export async function POST(request: NextRequest) {
         (a: { type: string }) => a.type === "twitter_oauth" || a.type === "twitter" || a.type === "x"
       ) as { type: string; username?: string | null; name?: string | null } | undefined;
 
-      const twitterHandle = (twitterAccount?.username ?? twitterAccount?.name ?? "")
+      const twitterHandle = (twitterAccount?.username ?? "")
         .replace(/^@/, "")
         .toLowerCase()
         .trim();
@@ -76,6 +82,20 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = getSupabaseAdmin();
+
+    // A handle another account already verified as its X handle (or loo- handle) is theirs, even if
+    // they switched their active username away from it.
+    {
+      const { data: owner } = await supabase
+        .from("app_users")
+        .select("privy_user_id")
+        .or(`twitter_username.ilike.${normalized},loo_username.ilike.${normalized}`)
+        .neq("privy_user_id", privyUserId)
+        .limit(1);
+      if (owner && owner.length > 0) {
+        return NextResponse.json({ error: "Username is already taken" }, { status: 409 });
+      }
+    }
 
     // Check if username is already taken by another user
     const { data: existingUser, error: checkError } = await supabase
