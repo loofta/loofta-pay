@@ -1,3 +1,5 @@
+import { getClientIp } from '@/common/get-client-ip';
+import { AllowWalletOnly } from '@/common/guards/verified-identity.guard';
 import {
   Controller,
   Get,
@@ -7,6 +9,7 @@ import {
   NotFoundException,
   BadRequestException,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -24,6 +27,7 @@ import { AdminGuard } from '@/common/guards';
 import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('users')
+@AllowWalletOnly()
 @Controller('users')
 export class UsersController {
   constructor(
@@ -68,8 +72,8 @@ export class UsersController {
   @UseGuards(PrivyAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Create the caller's app_users row on first login if missing" })
-  async ensureProfile(@PrivyUser() user: { id: string }) {
-    return this.usersService.ensureAppUser(user.id);
+  async ensureProfile(@PrivyUser() user: { id: string }, @Req() req: { headers: Record<string, unknown>; ip?: string }) {
+    return this.usersService.ensureAppUser(user.id, getClientIp(req));
   }
 
   /**

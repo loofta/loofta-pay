@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { isDisposableEmail } from '@/common/disposable-email';
 import { SupabaseService } from '@/database/supabase.service';
@@ -192,12 +193,24 @@ export class UsersService {
    *
    * Idempotent — safe to call on every login, not just the first.
    */
-  async ensureAppUser(privyUserId: string): Promise<{ id: string; username: string | null }> {
+  async ensureAppUser(privyUserId: string, clientIp?: string): Promise<{ id: string; username: string | null }> {
     const { data: existing } = await this.supabaseService.appUsers
       .select('id, username')
       .eq('privy_user_id', privyUserId)
       .maybeSingle();
     if (existing) return existing;
+
+    // Throwaway-account flood (2026-11-20: a new account every few minutes drained the fee payer).
+    // Only brand-new accounts reach this point. Stores a hash of the IP in Redis with a 24h expiry,
+    // never the raw IP. Fails open when Redis is down; shared networks get a generous limit.
+    if (clientIp && clientIp !== 'unknown' && this.redisService) {
+      const ipHash = createHash('sha256').update(clientIp).digest('hex').slice(0, 24);
+      const { allowed } = await this.redisService.slideWindow(`signup-ip:${ipHash}`, 5, 24 * 60 * 60);
+      if (!allowed) {
+        this.logger.warn(`ensureAppUser: signup limit hit for ip-hash ${ipHash} (user ${privyUserId})`);
+        throw new ForbiddenException('Too many accounts were created from this network recently. Please try again later.');
+      }
+    }
 
     const privyUser = await this.getPrivyUser(privyUserId);
     const accounts = privyUser?.linked_accounts ?? [];

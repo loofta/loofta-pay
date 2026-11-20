@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId, getPrivyUser, getVerifiedLiveTwitterProfile } from "@/lib/serverAuth";
 import { generateUniqueLooUsername, getTwitterHandleFromLinkedAccounts } from "@/lib/looUsername";
-import { redisGet, redisSet } from "@/lib/redis-cache";
+import { redisGet, redisSet, redisIncrWithExpiry } from "@/lib/redis-cache";
+import { createHash } from "crypto";
 import { isDisposableEmail } from "@/lib/disposableEmail";
 
 const USER_PREFS_TTL = 60 * 60 * 24; // 24h
@@ -108,6 +109,19 @@ export async function POST(request: NextRequest) {
         void redisSet(userPrefsKey(privyUserId), JSON.stringify(userPayload), USER_PREFS_TTL);
       }
       return NextResponse.json({ exists: true, user: userPayload, needsUsername: !user.username });
+    }
+
+    // Throwaway-account flood (2026-11-20): cap new accounts per network per 24h. Only a hash of the
+    // IP is stored, with an automatic expiry. Fails open if Redis is unavailable.
+    {
+      const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+      if (ip) {
+        const ipHash = createHash("sha256").update(ip).digest("hex").slice(0, 24);
+        const created = await redisIncrWithExpiry(`signup-ip:${ipHash}`, 24 * 60 * 60);
+        if (created > 5) {
+          return NextResponse.json({ error: "Too many accounts were created from this network recently. Please try again later." }, { status: 429 });
+        }
+      }
     }
 
     // User doesn't exist — detect Twitter handle via Privy so we can set all three columns upfront
