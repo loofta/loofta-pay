@@ -16,7 +16,7 @@ function getEnv(name: string, fallbacks: string[] = []) {
 }
 
 const ONECLICK_BASE = getEnv("ONECLICK_API_BASE", ["NEXT_PUBLIC_ONECLICK_API_BASE"]) || "https://1click.chaindefuser.com";
-const ONECLICK_JWT = getEnv("ONECLICK_JWT", ["NEXT_PUBLIC_ONECLICK_JWT"]);
+const ONECLICK_JWT = getEnv("ONECLICK_JWT");
 OpenAPI.BASE = ONECLICK_BASE;
 if (ONECLICK_JWT) OpenAPI.TOKEN = ONECLICK_JWT;
 
@@ -36,12 +36,16 @@ export async function POST(request: Request) {
     const supabaseForClaim = getSupabaseAdmin();
     const { data: paymentRow } = await supabaseForClaim
       .from("payments")
-      .select("id, amount, to_token, to_chain, recipient_address, burner_address, is_private")
+      .select("id, amount, status, to_token, to_chain, recipient_address, burner_address, is_private")
       .eq("id", claimId)
       .maybeSingle();
 
     if (!paymentRow) {
       return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+    }
+    // Only a payment still waiting to be funded can get a deposit quote (IDOR probe 2026-11-20).
+    if (!["OPEN", "PENDING", "PENDING_DEPOSIT"].includes(String((paymentRow as { status?: string | null }).status || "").toUpperCase())) {
+      return NextResponse.json({ error: "This payment can no longer be funded." }, { status: 409 });
     }
     const claim: Record<string, unknown> = {
       id: paymentRow.id,

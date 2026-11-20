@@ -56,7 +56,9 @@ export class DepositService {
    * Request deposit address for a claim payment
    */
   async requestDeposit(dto: RequestDepositDto): Promise<DepositResult> {
-    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate, recipientSolanaAddress, waiveFees } = dto;
+    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate, recipientSolanaAddress } = dto;
+    // Client-supplied waiveFees would let anyone switch off Loofta's fee on a public endpoint; no app sends it.
+    const waiveFees = false;
 
     // Validate input
     if (!claimId || !fromToken?.tokenId || fromToken.decimals === undefined || !amount) {
@@ -69,6 +71,12 @@ export class DepositService {
     // claim_burner_address (pending claims use burner).
     const claim = await this.claimsService.findPublicSummary(claimId);
     const rawClaim = await this.claimsService.findOneRaw(claimId);
+    // A deposit can only be requested for a payment that is still waiting to be funded. Without this, anyone
+    // holding a claim link could flip a paid, cancelled or expired payment to PENDING_DEPOSIT (2026-11-20 IDOR probe).
+    const claimStatus = String((rawClaim as { status?: string | null }).status || '').toUpperCase();
+    if (!['OPEN', 'PENDING', 'PENDING_DEPOSIT'].includes(claimStatus)) {
+      throw new BadRequestException('This payment can no longer be funded.');
+    }
 
     // Enforce private payment if claim requires it
     // If claim requires private payments, the request must have isPrivate: true

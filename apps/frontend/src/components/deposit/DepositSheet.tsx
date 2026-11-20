@@ -82,7 +82,7 @@ export type DepositLaunch = {
 };
 
 /** Fills the "Any crypto" withdrawal in ahead of time, e.g. from the partner withdraw page. */
-export type CryptoPrefill = { symbol: string; chain: string; address: string; amountUsd: number };
+export type CryptoPrefill = { symbol: string; chain: string; address: string; amountUsd: number; /** Force the private/public toggle (the Send page pays privately or not as chosen there). */ private?: boolean };
 
 export type CashOutRequest = { platformId: string; identifier: string; amountUsd: number; intent?: "pay" | "receive" };
 
@@ -165,6 +165,11 @@ export function DepositSheet({
     blinkDepositRef.current = null;
     setBlinkDepositing(false);
   }, [open]);
+
+  // A prefill from the Send page carries its own private/public choice; honour it over the remembered one.
+  useEffect(() => {
+    if (open && cryptoPrefill && typeof cryptoPrefill.private === "boolean") setPrivately(cryptoPrefill.private);
+  }, [open, cryptoPrefill]);
 
   const setPrivate = (on: boolean) => {
     setPrivately(on);
@@ -427,6 +432,7 @@ export function DepositSheet({
             userId={user?.id}
             getAccessToken={getAccessToken}
             onRefresh={onRefresh}
+            prefill={cryptoPrefill ?? null}
           />
         )}
 
@@ -907,11 +913,20 @@ function CardDeposit({
   const [amount, setAmount] = useState(initialAmount ?? "");
   const [busy, setBusy] = useState(false);
   const amountNum = Number(amount);
+  // Peer's checkout needs a desktop browser, so phones and tablets cannot start it.
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    try {
+      const ua = /Android|iPhone|iPad|iPod|Mobile|Opera Mini/i.test(navigator.userAgent);
+      const touchMac = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+      setIsMobile(ua || touchMac);
+    } catch { /* keep desktop */ }
+  }, []);
   const providers = CARD_PROVIDERS.filter((p) => p.id !== "paj" || PAJ_CASH_ENABLED);
-  const selected = providers.find((p) => p.id === provider) ?? null;
+  const selected = providers.find((p) => p.id === provider && !(isMobile && p.id === "peer")) ?? null;
 
   const continueWith = async (chosen: CardProvider) => {
-    if (chosen === "peer" && !(amountNum > 0)) return;
+    if (chosen === "peer" && (isMobile || !(amountNum > 0))) return;
     if (chosen === "paj") { onPaj(); return; }
     setBusy(true);
     try {
@@ -942,7 +957,7 @@ function CardDeposit({
           <button
             key={item.id}
             type="button"
-            disabled={busy}
+            disabled={busy || (isMobile && item.id === "peer")}
             onClick={() => {
               setProvider(item.id);
               if (item.id !== "peer" && item.id !== "card") void continueWith(item.id);
@@ -959,7 +974,7 @@ function CardDeposit({
             )}
             <span className="min-w-0 flex-1">
               <span className="block text-base font-bold text-white" style={{ fontFamily: SORA }}>{item.name}</span>
-              <span className="mt-0.5 block text-sm text-[#8A8893]">{item.hint}</span>
+              <span className="mt-0.5 block text-sm text-[#8A8893]">{isMobile && item.id === "peer" ? "Open Loofta on a desktop computer to use this" : item.hint}</span>
               {item.logos.length > 1 && (
                 <span className="mt-2.5 flex">
                   {item.logos.map((logo, i) => (
@@ -1045,7 +1060,22 @@ async function startPeerCheckout(args: {
     const err = await res.json().catch(() => ({})) as { error?: string };
     throw new Error(err.error || "Could not open checkout");
   }
-  const { checkoutUrl } = await res.json();
+  const { checkoutUrl, orderId } = await res.json();
+  // Record the deposit so analytics and history count it. The backend reconciler completes it once the
+  // Near Intents bridge behind this one-time address settles; a failed write must not block checkout.
+  try {
+    await fetch("/api/users/deposits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
+      body: JSON.stringify({
+        type: "peer-pay",
+        status: "pending",
+        amount_usdc: Number(args.amount),
+        deposit_address: info.depositAddress,
+        provider_order_id: orderId,
+      }),
+    });
+  } catch { /* non-fatal */ }
   window.open(checkoutUrl, "peer-checkout", "width=460,height=730");
 }
 
@@ -1311,6 +1341,7 @@ function SolanaWithdraw({
   userId,
   getAccessToken,
   onRefresh,
+  prefill,
 }: {
   privately: boolean;
   balanceNum: number;
@@ -1319,6 +1350,7 @@ function SolanaWithdraw({
   userId?: string;
   getAccessToken: () => Promise<string | null>;
   onRefresh?: () => void;
+  prefill?: CryptoPrefill | null;
 }) {
   const { toast } = useToast();
   const { withdraw: withdrawPrivately } = usePerPrivateSelfTransfer();
@@ -1335,6 +1367,13 @@ function SolanaWithdraw({
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState("Sending…");
   const [sent, setSent] = useState<string | null>(null);
+  const prefillApplied = useRef(false);
+  useEffect(() => {
+    if (!prefill || prefillApplied.current || !isSolanaChain(prefill.chain)) return;
+    prefillApplied.current = true;
+    setDestination(prefill.address);
+    setAmount(prefill.amountUsd.toFixed(2).replace(/\.00$/, ""));
+  }, [prefill]);
   const domain = useSolDomain(destination, cluster);
   const amountNum = Number(amount);
   const resolved = domain.status === "resolved" ? domain.address : destination.trim();
