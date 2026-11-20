@@ -1782,10 +1782,9 @@ export class ClaimsService {
       const pendingUsername = recipientAddress.slice(ClaimsService.PENDING_USERNAME_PREFIX.length).trim().toLowerCase();
       if (!pendingUsername) return { isRecipient: false };
       const creator = await this.usersService.findByPrivyId(privyUserId);
-      const userUsername = creator?.username?.toLowerCase() ?? '';
-      if (userUsername === pendingUsername) {
-        return { isRecipient: true };
-      }
+      // Deliberately NOT matching on the mutable `username` column: it was self-settable, so an
+      // account could rename itself to a victim's handle, claim a payment addressed to it, and
+      // rename back (2026-11-20). Only the permanent loo_username and a Privy-verified live handle count.
       // Sent via the "Loofta username" option: addressed to the permanent loo_username, which can
       // differ from the active username (e.g. an X handle). Unique per user, so safe to match.
       if (creator?.looUsername && creator.looUsername.toLowerCase() === pendingUsername) {

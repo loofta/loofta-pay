@@ -1059,6 +1059,36 @@ export class SolanaSponsorService {
   }
 
   /**
+   * The fee payer signs every sponsored transaction, so any token instruction that names the fee
+   * payer wallet (as the transfer authority, owner, or anything else) lets a client spend the fee
+   * payer's own USDC. A token transfer only ever references token accounts plus the AUTHORITY
+   * wallet, so the fee payer wallet must never appear in a token instruction at all. Incident
+   * 2026-11-20: a client-built tx moved ~8 USDC out of the fee payer's ATA to a burner, signed by
+   * the fee payer alone, then swept to the attacker.
+   */
+  private assertFeePayerNotTokenAuthority(tx: Transaction | VersionedTransaction): void {
+    const feePayer = this.feePayerAddress;
+    if (!feePayer) throw new Error('Solana fee sponsorship is not configured');
+    if (tx instanceof Transaction) {
+      for (const ix of tx.instructions) {
+        if (isSponsoredTokenProgram(ix.programId.toBase58()) && ix.keys.some((k) => k.pubkey.toBase58() === feePayer)) {
+          this.logger.error('SolanaSponsor: BLOCKED token instruction naming the fee payer as an account (drain attempt)');
+          throw new Error('Transaction uses the fee payer wallet in a token instruction');
+        }
+      }
+      return;
+    }
+    const keys = tx.message.getAccountKeys().staticAccountKeys;
+    for (const ix of tx.message.compiledInstructions) {
+      if (!isSponsoredTokenProgram(keys[ix.programIdIndex]?.toBase58())) continue;
+      if (ix.accountKeyIndexes.some((i) => keys[i]?.toBase58() === feePayer)) {
+        this.logger.error('SolanaSponsor: BLOCKED token instruction naming the fee payer as an account (drain attempt, v0)');
+        throw new Error('Transaction uses the fee payer wallet in a token instruction');
+      }
+    }
+  }
+
+  /**
    * Validate that the transaction uses our fee payer and does not transfer SOL from the fee payer.
    * Then sign with fee payer and broadcast with skipPreflight.
    *
@@ -1162,6 +1192,7 @@ export class SolanaSponsorService {
           }
         }
       }
+      this.assertFeePayerNotTokenAuthority(legacy);
       legacy.partialSign(this.feePayerKeypair);
       const missingLegacySigners = legacy.signatures
         .filter((s) => !s.signature)
@@ -1252,6 +1283,7 @@ export class SolanaSponsorService {
         }
       }
     }
+    this.assertFeePayerNotTokenAuthority(versioned);
     versioned.sign([this.feePayerKeypair]);
     const missingV0Signers = versioned.signatures
       .map((sigBytes, idx) => ({ idx, hasSig: sigBytes.some((b) => b !== 0) }))
@@ -1436,6 +1468,7 @@ export class SolanaSponsorService {
           }
         }
       }
+      this.assertFeePayerNotTokenAuthority(legacy);
       legacy.partialSign(this.feePayerKeypair);
       if (!legacy.verifySignatures()) {
         const signerState = legacy.signatures.map((s) => ({
@@ -1506,6 +1539,7 @@ export class SolanaSponsorService {
           }
         }
       }
+      this.assertFeePayerNotTokenAuthority(versioned);
       versioned.sign([this.feePayerKeypair]);
       serializedForBroadcast = versioned.serialize();
     }
