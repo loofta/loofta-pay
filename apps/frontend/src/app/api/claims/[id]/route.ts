@@ -460,7 +460,9 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     // Only ever set true, never false — false is already the safe default and no caller here
     // should be able to erase a true flag set elsewhere. Set by a guest's private MagicBlock
     // Payments API transfer (see GuestCheckoutPay.tsx) confirming its own on-chain result.
-    if (isPrivate === true) {
+    // A signed-in client must never stamp this itself: the private-transfer check below trusts the
+    // flag, and the backend's build-private-transfer is what sets it for logged-in senders.
+    if (isPrivate === true && isGuestAttempt) {
       updateData.is_private = true;
     }
 
