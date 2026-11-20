@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { isNonMainnetCluster } from "@/lib/solanaCluster";
 import { generateShortId } from "@/lib/shortId";
-import { getVerifiedUserId, isWalletAddressRegisteredOnLoofta } from "@/lib/serverAuth";
+import { getVerifiedUserId, isWalletAddressRegisteredOnLoofta, hasVerifiedIdentity } from "@/lib/serverAuth";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 
 const BACKEND_URL =
@@ -38,10 +38,19 @@ export async function POST(request: Request) {
   if (!uid) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (!(await hasVerifiedIdentity(uid))) {
+    return NextResponse.json({ error: "Add an email or a social account to your profile to use this feature." }, { status: 403 });
+  }
   try {
     const { amount, toSel, recipient, description, direction, cluster, feeOnSender, isPrivate } = await request.json();
     if (!amount || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+    }
+    // Same bounds as the backend DTOs (@Min(0.01)). This route writes straight to the DB, so without
+    // this a client could create 0, negative or absurd amounts (2026-11-20: -5 and 1e12 USDC rows).
+    const amountNum = Number(amount);
+    if (!Number.isFinite(amountNum) || amountNum < 0.01 || amountNum > 1_000_000) {
+      return NextResponse.json({ error: "Amount must be between 0.01 and 1,000,000 USDC." }, { status: 400 });
     }
     // recipient_address is always stored as a Solana address (to_chain is hardcoded below) —
     // reject malformed input here rather than only relying on the client-side check.

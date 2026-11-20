@@ -589,6 +589,16 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         }
       }
 
+      // Clients never get to rewrite a payment's history: a settled/closed payment can't be moved to any
+      // other status, and REFUNDED is server-only. (2026-11-20: a creator could flip statuses at will.)
+      if (!isGuestAttempt) {
+        const current = String((existingPayment as { status?: string | null }).status || "").toUpperCase();
+        const closed = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "REFUNDED", "CANCELLED", "DELETED"];
+        if (status === "REFUNDED" || (closed.includes(current) && status !== current)) {
+          return NextResponse.json({ error: "This status change is not allowed." }, { status: 403 });
+        }
+      }
+
       // from_sender payments: the sender must never be able to declare "paid" on their own word.
       // Previously only request links and guests were verified, so the creator could PATCH
       // SUCCESS with no txHash at all (forged payments, 2026-11-20). Require a unique tx hash and,

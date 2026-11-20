@@ -24,6 +24,23 @@ export async function getPrivyUser(privyUserId: string) {
   }
 }
 
+const identityCache = new Map<string, { ok: boolean; at: number }>();
+
+/**
+ * True when the Privy account has an email, phone or social login (not just a bare wallet).
+ * Wallet-only accounts cost nothing to mint in bulk and were used to attack the platform
+ * (2026-11-20). Fails open if Privy is unreachable. Same rule as the backend's VerifiedIdentityGuard.
+ */
+export async function hasVerifiedIdentity(privyUserId: string): Promise<boolean> {
+  const hit = identityCache.get(privyUserId);
+  if (hit && Date.now() - hit.at < (hit.ok ? 300_000 : 30_000)) return hit.ok;
+  const user = await getPrivyUser(privyUserId);
+  if (!user) return true;
+  const ok = (user.linkedAccounts ?? []).some((a: { type?: string }) => /^(email|phone|custom_auth|telegram)$|_oauth$/.test(String(a.type)));
+  identityCache.set(privyUserId, { ok, at: Date.now() });
+  return ok;
+}
+
 /** The caller's own linked Solana wallet addresses, per Privy's live record (not client-supplied). */
 export async function getVerifiedSolanaWallets(privyUserId: string): Promise<string[]> {
   const user = await getPrivyUser(privyUserId);

@@ -1,3 +1,4 @@
+import { isDisposableEmail } from '@/common/disposable-email';
 import { assertSafePublicUrlResolved } from '@/common/assert-safe-public-url';
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -984,6 +985,8 @@ export class ClaimsService {
   async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { email, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
     this.assertMinimumPaymentAmount(amount);
+    // Throwaway inboxes (guerrillamail etc.) were used as payment recipients in the 2026-11-20 attack.
+    if (isDisposableEmail(email)) throw new BadRequestException('Temporary email addresses are not allowed as recipients.');
     await this.assertSenderVelocity(userId);
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
@@ -3874,6 +3877,20 @@ export class ClaimsService {
     // PRIVATE_TRANSFER_PENDING from a client is just SUCCESS on a burner claim (updateStatus downgrades it).
     const finalStatus = next === 'IN_FLIGHT' ? 'IN_FLIGHT' : 'SUCCESS';
     await this.assertClientTxHash(row.id as string, extra.txHash ?? '', row, extra.isPrivate === true, finalStatus === 'SUCCESS');
+    // IN_FLIGHT claims "a transaction was sent": it must at least exist on-chain (give a just-broadcast
+    // tx a few seconds to appear). Private (rollup) sends can't be seen from the base chain.
+    if (finalStatus === 'IN_FLIGHT' && extra.isPrivate !== true) {
+      const { conn } = this.resolveClaimNetwork(row as unknown as Claim);
+      let seen = false;
+      for (let i = 0; i < 8 && !seen; i++) {
+        const st = await conn.getSignatureStatuses([extra.txHash!.trim()], { searchTransactionHistory: true }).catch(() => null);
+        const v = st?.value?.[0];
+        if (v && !v.err) seen = true;
+        else if (v?.err) throw new BadRequestException('That transaction failed on-chain.');
+        else await new Promise((r) => setTimeout(r, 1200));
+      }
+      if (!seen) throw new BadRequestException('That transaction was not found on-chain.');
+    }
     return this.updateStatus(id, finalStatus as ClaimStatus, {
       txHash: extra.txHash!.trim(),
       paidWith: extra.paidWith,
