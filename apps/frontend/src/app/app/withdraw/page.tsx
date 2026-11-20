@@ -167,7 +167,7 @@ function WithdrawContent() {
   const loadQuote = useCallback(async () => {
     try {
       // Only the sample partner reads these from the link, so a demo can show any mix of routes and history.
-      const demoQs = orgId === "demo" ? `?${new URLSearchParams({ ...(params.get("methods") ? { methods: params.get("methods")! } : {}), ...(params.get("history") ? { history: params.get("history")! } : {}) })}` : "";
+      const demoQs = orgId === "demo" ? `?${new URLSearchParams(Object.fromEntries(["methods", "history", "name", "color", "fee", "pct", "prize"].flatMap((k) => (params.get(k) ? [[k, params.get(k)!]] : []))))}` : "";
       setQuote(await call(`partner-withdraw/${encodeURIComponent(orgId)}/quote${demoQs}`));
       setError(null);
     } catch (e) {

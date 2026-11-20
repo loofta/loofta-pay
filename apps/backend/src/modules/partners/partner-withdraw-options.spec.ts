@@ -40,3 +40,25 @@ describe('demo partner options from the link', () => {
     expect(demoQuote({ methods: 'x,y' }).methods).toHaveLength(4);
   });
 });
+
+describe('demo partner set up from the link', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { demoQuote } = require('./partner-demo');
+
+  it('takes name, color, fees and prize from the link, clamped and sanitised', () => {
+    const q = demoQuote({ name: '<b>Acme</b> Games', color: '3b82f6', fee: '0.5', pct: '2', prize: '400' });
+    expect(q.partner.name).toBe('bAcmeb Games');
+    expect(q.partner.brand_color).toBe('#3b82f6');
+    expect(q.gross_usdc).toBe(400);
+    expect(q.partner_fee_usdc).toBe(8.5); // 0.50 flat + 2% of 400
+    expect(q.net_usdc).toBe(391.5);
+  });
+
+  it('ignores junk and keeps the default sample', () => {
+    const q = demoQuote({ color: 'javascript', fee: 'x', pct: '-4', prize: '999999' });
+    expect(q.partner.brand_color).toBe('#ff7a2a');
+    expect(q.partner.fee_fixed_usd).toBe(0.25);
+    expect(q.partner.fee_percent_bps).toBe(0);
+    expect(q.gross_usdc).toBe(10000);
+  });
+});

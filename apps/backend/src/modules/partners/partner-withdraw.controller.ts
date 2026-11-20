@@ -25,9 +25,10 @@ export class PartnerWithdrawController {
 
   @Get(':orgId/quote')
   @RateLimit(30, 60, 'partner-withdraw:quote')
-  quote(@PrivyUser() user: { id: string }, @Param('orgId') orgId: string, @Query('methods') methods?: string, @Query('history') history?: string) {
-    // methods and history only mean something for the built-in demo partner; real partners ignore them.
-    return this.withdraw.quote(orgId, user.id, { methods, history });
+  quote(@PrivyUser() user: { id: string }, @Param('orgId') orgId: string, @Query() q: Record<string, string>) {
+    // methods, history, name, color, fee, pct and prize only mean something for the built-in demo partner; real partners ignore them.
+    const pick = (k: string) => (typeof q?.[k] === 'string' ? q[k] : undefined);
+    return this.withdraw.quote(orgId, user.id, { methods: pick('methods'), history: pick('history'), name: pick('name'), color: pick('color'), fee: pick('fee'), pct: pick('pct'), prize: pick('prize') });
   }
 
   @Post(':orgId/confirm')

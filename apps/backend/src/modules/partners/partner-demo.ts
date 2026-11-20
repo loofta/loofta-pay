@@ -36,26 +36,54 @@ export function parseDemoOptions(methods?: string, history?: string): { methods:
   return { methods: picked.length ? [...new Set(picked)] : [...WITHDRAW_METHODS], showHistory: history !== '0' };
 }
 
-export function demoQuote(opts: { methods?: string; history?: string } = {}): WithdrawQuote {
-  const o = parseDemoOptions(opts.methods, opts.history);
-  const partnerFee = computePartnerFeeUsdc(DEMO_PARTNER, DEMO_PRIZE_USD);
+export type DemoQuery = { methods?: string; history?: string; name?: string; color?: string; fee?: string; pct?: string; prize?: string };
+
+const num = (v: string | undefined, min: number, max: number, fallback: number) => {
+  const n = Number(v);
+  return v !== undefined && v !== '' && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+};
+
+/**
+ * The sample partner also takes its look and fees from the link (name, brand color, flat fee, percent, prize), so a
+ * prospect can set their own up in the demo store and see this page change. Everything is clamped and sanitised, and
+ * only the built-in demo partner ever reads it.
+ */
+export function demoPartner(q: DemoQuery = {}): PublicPartner {
+  const o = parseDemoOptions(q.methods, q.history);
+  const name = (q.name ?? '').replace(/[^\p{L}\p{N} .&'-]/gu, '').trim().slice(0, 30);
   return {
-    partner: DEMO_PARTNER,
+    ...DEMO_PARTNER,
+    name: name || DEMO_PARTNER.name,
+    brand_color: /^[0-9a-fA-F]{6}$/.test(q.color ?? '') ? `#${q.color}` : DEMO_PARTNER.brand_color,
+    fee_fixed_usd: num(q.fee, 0, 5, DEMO_PARTNER.fee_fixed_usd),
+    fee_percent_bps: Math.round(num(q.pct, 0, 20, DEMO_PARTNER.fee_percent_bps / 100) * 100),
+    disabled_withdraw_methods: WITHDRAW_METHODS.filter((m) => !o.methods.includes(m)),
+    show_history: o.showHistory,
+  };
+}
+
+export function demoQuote(opts: DemoQuery = {}): WithdrawQuote {
+  const o = parseDemoOptions(opts.methods, opts.history);
+  const partner = demoPartner(opts);
+  const prize = num(opts.prize, 1, 10_000, DEMO_PRIZE_USD);
+  const partnerFee = computePartnerFeeUsdc(partner, prize);
+  return {
+    partner,
     available: [
       {
         payment_id: 'demo-prize',
-        amount: DEMO_PRIZE_USD,
+        amount: prize,
         message: 'Summer Quest, 1st place',
         created_at: new Date().toISOString(),
         funded: true,
       },
     ],
     processing: [],
-    gross_usdc: DEMO_PRIZE_USD,
+    gross_usdc: prize,
     partner_fee_usdc: partnerFee,
     loofta_fee_usdc: 0,
-    net_usdc: Math.round((DEMO_PRIZE_USD - partnerFee) * 1e6) / 1e6,
-    min_usd: DEMO_PARTNER.withdraw_min_usd,
+    net_usdc: Math.round((prize - partnerFee) * 1e6) / 1e6,
+    min_usd: partner.withdraw_min_usd,
     can_withdraw: true,
     reason: null,
     methods: o.methods,

@@ -9,7 +9,7 @@ import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { isValidSolanaAddress } from '@/common/solana-address';
 import { PartnersService, Partner, PublicPartner } from './partners.service';
 import { allocateFeeUnits, computePartnerFeeUsdc } from './partner-fee';
-import { DEMO_ORG_ID, demoConfirm, demoQuote } from './partner-demo';
+import { DEMO_ORG_ID, DemoQuery, demoConfirm, demoQuote } from './partner-demo';
 import { WITHDRAW_METHODS, WithdrawMethod, enabledMethods } from './partner-withdraw-options';
 
 const MAX_PAYOUTS_PER_WITHDRAWAL = 50;
@@ -203,7 +203,7 @@ export class PartnerWithdrawService {
     }));
   }
 
-  async quote(orgId: string, userId: string, demo?: { methods?: string; history?: string }): Promise<WithdrawQuote> {
+  async quote(orgId: string, userId: string, demo?: DemoQuery): Promise<WithdrawQuote> {
     if (orgId === DEMO_ORG_ID) return demoQuote(demo);
     const partner = await this.loadPartner(orgId);
     const c = await this.compute(partner, userId);
