@@ -693,6 +693,15 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         }
       }
 
+      // A private (rollup) send cannot be proven from here or from the base chain, so a client report only means
+      // "sent". The backend verifier promotes it once the claim's burner really holds the money (2026-11-20: forged
+      // private SUCCESS rows with made-up or reused hashes). Request-link payments (from_recipient) are already
+      // proven by the burner balance check above, so they keep their status.
+      if (isPayerLegSettling && isPrivate === true && ep.direction !== "from_recipient") {
+        updateData.status = "IN_FLIGHT";
+        delete updateData.paid_at;
+      }
+
       const { data, error } = await supabase
         .from("payments")
         .update(updateData)

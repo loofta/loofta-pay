@@ -72,6 +72,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Atomic "claim this key": true if it was unset (now owned by value), false if already set, null if Redis is unavailable. */
+  async setIfAbsent(key: string, value: string, ttlSeconds: number): Promise<boolean | null> {
+    if (!this.client) return null;
+    try {
+      return (await this.client.set(key, value, 'EX', ttlSeconds, 'NX')) === 'OK';
+    } catch {
+      return null;
+    }
+  }
+
   async del(key: string): Promise<void> {
     if (!this.client) return;
     await this.client.del(key);

@@ -76,7 +76,7 @@ export class SolanaTxVerifierService {
         const status = statuses[i];
         const result = await this.redisService.withLock(
           `solana-tx-verify:${claim.id}`,
-          () => this.applyStatus(claim, status),
+          () => (claim.hasBurner ? this.applyBurnerFunded(claim) : this.applyStatus(claim, status)),
           60_000,
         );
         if (result) results.push(result);
@@ -88,6 +88,19 @@ export class SolanaTxVerifierService {
     }
 
     return results;
+  }
+
+  /**
+   * Burner-routed (private) claims: the sender's rollup transaction is invisible from the base chain, so the saved
+   * hash proves nothing. The only proof is the money itself: promote once the burner really holds the payment.
+   */
+  private async applyBurnerFunded(claim: { id: string; sender_tx_hash: string }): Promise<TxVerifierResult> {
+    const { id: claimId, sender_tx_hash: txHash } = claim;
+    if (!(await this.claimsService.burnerHoldsPayment(claimId))) return { claimId, txHash, action: 'skipped' };
+    this.logger.log(`[SolanaTxVerifier] burner funded — claim ${claimId} IN_FLIGHT → paid (burner routing downgrades to PRIVATE_TRANSFER_PENDING)`);
+    await this.claimsService.updateStatus(claimId, 'SUCCESS', { txHash, isPrivate: true, paidWithToken: 'USDC', paidWithChain: 'solana' });
+    this.claimsService.notifyRecipientAfterPayment(claimId);
+    return { claimId, txHash, action: 'confirmed' };
   }
 
   private async applyStatus(

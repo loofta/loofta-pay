@@ -1,3 +1,4 @@
+import { RedisService } from '@/redis/redis.service';
 import { isDisposableEmail } from '@/common/disposable-email';
 import { assertSafePublicUrlResolved } from '@/common/assert-safe-public-url';
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, forwardRef } from '@nestjs/common';
@@ -138,6 +139,7 @@ export class ClaimsService {
     private readonly magicblockQuest: MagicblockQuestService,
     private readonly pajCashBank: PajCashBankService,
     private readonly pajCashOrders: PajCashOrdersService,
+    @Optional() private readonly redisService: RedisService | null = null,
   ) {
     const defaultUsdcMint = isSolanaDevnetFromConfig(this.configService)
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
@@ -3815,6 +3817,14 @@ export class ClaimsService {
       .neq('id', row.id as string)
       .limit(1);
     if (dupes && dupes.length > 0) throw new BadRequestException('This transaction is already attached to another payment.');
+    // The read above is racy: two parallel requests can both see "unused" (2026-11-20: the same hash landed on two
+    // payments in the same second). Claim the hash atomically; the same claim may re-report its own hash.
+    if (this.redisService) {
+      const claimed = await this.redisService.setIfAbsent(`txhash:${sig}`, String(row.id), 7 * 24 * 60 * 60);
+      if (claimed === false && (await this.redisService.get(`txhash:${sig}`)) !== String(row.id)) {
+        throw new BadRequestException('This transaction is already attached to another payment.');
+      }
+    }
 
     if (isPrivate) {
       if (row.is_private !== true) throw new ForbiddenException('No private transfer was prepared for this payment.');
@@ -3875,7 +3885,9 @@ export class ClaimsService {
       throw new BadRequestException('This payment is not awaiting funding.');
     }
     // PRIVATE_TRANSFER_PENDING from a client is just SUCCESS on a burner claim (updateStatus downgrades it).
-    const finalStatus = next === 'IN_FLIGHT' ? 'IN_FLIGHT' : 'SUCCESS';
+    // A private (rollup) send can never be proven from the base chain, so a client report only ever means "sent":
+    // the server promotes it once the claim's burner really holds the funds (SolanaTxVerifierService).
+    const finalStatus = next === 'IN_FLIGHT' || extra.isPrivate === true ? 'IN_FLIGHT' : 'SUCCESS';
     await this.assertClientTxHash(row.id as string, extra.txHash ?? '', row, extra.isPrivate === true, finalStatus === 'SUCCESS');
     // IN_FLIGHT claims "a transaction was sent": it must at least exist on-chain (give a just-broadcast
     // tx a few seconds to appear). Private (rollup) sends can't be seen from the base chain.
@@ -4371,6 +4383,24 @@ export class ClaimsService {
    * (incident 2026-07-24, claim b665e249). Burner claims are the sweep cron's job
    * (cronSweepPendingBurners) and the recipient's own claim action — never this verifier's.
    */
+  /** Has the claim's burner actually received (at least ~98% of) the payment, on the base chain? */
+  async burnerHoldsPayment(id: string): Promise<boolean> {
+    const result = await this.fetchRawRow(id);
+    const row = result?.row;
+    const burner = String(row?.claim_burner_address || row?.burner_address || '').trim();
+    if (!row || !burner) return false;
+    const { conn, claimMint } = this.resolveClaimNetwork(row as unknown as Claim);
+    const baseUnits = Number(row.token_base_units) || Math.round((Number(row.amount) || 0) * 1_000_000);
+    if (!(baseUnits > 0)) return false;
+    try {
+      const accts = await conn.getParsedTokenAccountsByOwner(new PublicKey(burner), { mint: claimMint });
+      const held = accts.value.reduce((a, t) => a + Number(t.account.data.parsed?.info?.tokenAmount?.amount ?? 0), 0);
+      return held >= baseUnits * 0.98;
+    } catch {
+      return false;
+    }
+  }
+
   async getRawRowForVerification(id: string): Promise<Record<string, unknown> | null> {
     return (await this.fetchRawRow(id))?.row ?? null;
   }
