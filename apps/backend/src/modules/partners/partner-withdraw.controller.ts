@@ -28,7 +28,7 @@ export class PartnerWithdrawController {
   quote(@PrivyUser() user: { id: string }, @Param('orgId') orgId: string, @Query() q: Record<string, string>) {
     // methods, history, name, color, fee, pct and prize only mean something for the built-in demo partner; real partners ignore them.
     const pick = (k: string) => (typeof q?.[k] === 'string' ? q[k] : undefined);
-    return this.withdraw.quote(orgId, user.id, { methods: pick('methods'), history: pick('history'), name: pick('name'), color: pick('color'), fee: pick('fee'), pct: pick('pct'), prize: pick('prize') });
+    return this.withdraw.quote(orgId, user.id, { methods: pick('methods'), history: pick('history'), name: pick('name'), color: pick('color'), fee: pick('fee'), pct: pick('pct'), prize: pick('prize'), logo: pick('logo') });
   }
 
   @Post(':orgId/confirm')

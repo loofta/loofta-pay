@@ -36,7 +36,10 @@ export function parseDemoOptions(methods?: string, history?: string): { methods:
   return { methods: picked.length ? [...new Set(picked)] : [...WITHDRAW_METHODS], showHistory: history !== '0' };
 }
 
-export type DemoQuery = { methods?: string; history?: string; name?: string; color?: string; fee?: string; pct?: string; prize?: string };
+export type DemoQuery = { methods?: string; history?: string; name?: string; color?: string; fee?: string; pct?: string; prize?: string; logo?: string };
+
+/** Sample logos the demo store serves. Only these ids map to a URL, so a link can never point the page at an arbitrary image. */
+const DEMO_LOGOS = ['ring', 'bars', 'spark', 'wave', 'tri', 'dia'];
 
 const num = (v: string | undefined, min: number, max: number, fallback: number) => {
   const n = Number(v);
@@ -54,6 +57,7 @@ export function demoPartner(q: DemoQuery = {}): PublicPartner {
   return {
     ...DEMO_PARTNER,
     name: name || DEMO_PARTNER.name,
+    logo_url: DEMO_LOGOS.includes(q.logo ?? '') ? `https://loofta-rally.fly.dev/logos/${q.logo}.svg` : DEMO_PARTNER.logo_url,
     brand_color: /^[0-9a-fA-F]{6}$/.test(q.color ?? '') ? `#${q.color}` : DEMO_PARTNER.brand_color,
     fee_fixed_usd: num(q.fee, 0, 5, DEMO_PARTNER.fee_fixed_usd),
     fee_percent_bps: Math.round(num(q.pct, 0, 20, DEMO_PARTNER.fee_percent_bps / 100) * 100),

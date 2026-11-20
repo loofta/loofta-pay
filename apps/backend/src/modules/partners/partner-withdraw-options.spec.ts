@@ -61,4 +61,9 @@ describe('demo partner set up from the link', () => {
     expect(q.partner.fee_percent_bps).toBe(0);
     expect(q.gross_usdc).toBe(10000);
   });
+
+  it('shows a sample logo only for known ids', () => {
+    expect(demoQuote({ logo: 'wave' }).partner.logo_url).toBe('https://loofta-rally.fly.dev/logos/wave.svg');
+    expect(demoQuote({ logo: 'https://evil.example/x.png' }).partner.logo_url).toBeNull();
+  });
 });
