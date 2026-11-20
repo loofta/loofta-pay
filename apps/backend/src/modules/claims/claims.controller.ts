@@ -929,8 +929,10 @@ export class ClaimsController {
     // Same ownership checks as sign-and-broadcast — this endpoint had neither, which combined
     // with its previously-missing program whitelist made it the more exploitable of the two.
     const userId = req.user?.id;
+    let ownWallets: string[] = [];
     if (userId) {
       const userSigners = this.solanaSponsor.getRequiredUserSigners(body.transaction);
+      ownWallets = userSigners;
       if (userSigners.length > 0) {
         const checks = await Promise.all(
           userSigners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
@@ -952,7 +954,7 @@ export class ClaimsController {
     }
 
     try {
-      return await this.solanaSponsor.signAndBroadcastPER(body.transaction, undefined, userId, body.claimId);
+      return await this.solanaSponsor.signAndBroadcastPER(body.transaction, undefined, userId, body.claimId, ownWallets);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');

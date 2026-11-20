@@ -1364,6 +1364,27 @@ export class SolanaSponsorService {
     return { transactionBase64: Buffer.from(ser).toString('base64') };
   }
 
+  private readonly topupSpent = new Map<string, { day: string; lamports: number }>();
+
+  /**
+   * A fee-payer SOL top-up inside a client-built PER transaction may only go to one of the caller's OWN verified
+   * wallets, and only a little per day. Before this, any destination was allowed up to 0.005 SOL per broadcast, so
+   * 15 broadcasts a minute pumped ~$5/min of SOL to throwaway wallets (2026-11-20, 05:14 UTC).
+   */
+  private assertTopupAllowed(userId: string | undefined, destination: string | undefined, lamports: number, ownWallets: string[]): void {
+    if (!userId || !destination || !ownWallets.includes(destination)) {
+      this.logger.error(`SolanaSponsor: BLOCKED SOL top-up to ${destination?.slice(0, 8) ?? 'unknown'} (not the caller's own wallet) user=${userId ?? 'none'}`);
+      throw new Error('SOL top-up must go to your own wallet');
+    }
+    const day = new Date().toISOString().slice(0, 10);
+    const spent = this.topupSpent.get(userId);
+    const used = spent && spent.day === day ? spent.lamports : 0;
+    if (used + lamports > 10_000_000) {
+      throw new Error('Daily SOL top-up limit reached');
+    }
+    this.topupSpent.set(userId, { day, lamports: used + lamports });
+  }
+
   /**
    * Countersign a user-signed MagicBlock PER transaction with our fee payer and broadcast.
    *
@@ -1376,6 +1397,8 @@ export class SolanaSponsorService {
     conn?: Connection,
     userId?: string,
     claimId?: string,
+    /** The caller's own verified wallets that sign this transaction: the only places a fee-payer SOL top-up may go. */
+    ownWallets: string[] = [],
   ): Promise<{ signature: string }> {
     const broadcastConn = conn ?? this.connection;
     const transactionBuffer = Buffer.from(userSignedTxBase64, 'base64');
@@ -1474,6 +1497,7 @@ export class SolanaSponsorService {
           const sender = ix.keys[0]?.pubkey;
           if (sender?.toBase58() === this.feePayerAddress) {
             const lamports = Number(ix.data.readBigUInt64LE(4));
+            this.assertTopupAllowed(userId, ix.keys[1]?.pubkey.toBase58(), lamports, ownWallets);
             totalFeePayerLamports += lamports;
             if (totalFeePayerLamports > MAX_TOPUP_LAMPORTS) {
               throw new Error(`PER transaction attempts to transfer too much SOL from fee payer (${totalFeePayerLamports} lamports)`);
@@ -1545,6 +1569,7 @@ export class SolanaSponsorService {
           if (sender?.toBase58() === this.feePayerAddress) {
             const view = new DataView(ix.data.buffer, ix.data.byteOffset);
             const lamports = Number(view.getBigUint64(4, true));
+            this.assertTopupAllowed(userId, staticKeys[ix.accountKeyIndexes[1]]?.toBase58(), lamports, ownWallets);
             totalFeePayerLamports += lamports;
             if (totalFeePayerLamports > MAX_TOPUP_LAMPORTS) {
               throw new Error(`PER v0 transaction attempts to transfer too much SOL from fee payer (${totalFeePayerLamports} lamports)`);
