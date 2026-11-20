@@ -19,7 +19,7 @@ const BASE_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const DEFAULT_BASE_RPC = 'https://mainnet.base.org';
 const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
-const PLATFORM_NAMES: Record<string, string> = { venmo: 'Venmo', cashapp: 'Cash App', revolut: 'Revolut', wise: 'Wise', paypal: 'PayPal', chime: 'Chime', monzo: 'Monzo', upi: 'UPI', xmoney: 'X Money' };
+const PLATFORM_NAMES: Record<string, string> = { venmo: 'Venmo', cashapp: 'Cash App', revolut: 'Revolut', wise: 'Wise', paypal: 'PayPal', chime: 'Chime', monzo: 'Monzo', upi: 'UPI', xmoney: 'X Money', zelle: 'Zelle' };
 
 /** Per-platform Loofta-side limits. The cooldown is per recipient identifier, across all senders. */
 const PLATFORM_LIMITS: Record<string, { maxUsdc?: number; cooldownHours?: number }> = {

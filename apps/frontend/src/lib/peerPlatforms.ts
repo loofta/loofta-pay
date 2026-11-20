@@ -169,11 +169,11 @@ export function getPlatform(id: string): PeerPlatform | undefined {
 /**
  * Handles a sender can pay directly through Peer Cash. Wise and PayPal used to
  * need a Peer identity attestation this app cannot create; since @zkp2p/cash
- * 0.8 only Alipay does, so they can be paid with a bare handle. Zelle stays on
- * the withdraw picker only. X Money needs no attestation or prior payee
- * registration either (needs @zkp2p/cash >= 0.7.0).
+ * 0.8 only Alipay does, so they can be paid with a bare handle. X Money needs no attestation or prior payee
+ * registration either (needs @zkp2p/cash >= 0.7.0). Zelle is USD only and takes
+ * the recipient's enrolled email or US phone number (no attestation).
  */
-export const DIRECT_CASH_PLATFORM_IDS = ["venmo", "cashapp", "revolut", "wise", "paypal", "chime", "monzo", "upi", "xmoney"] as const;
+export const DIRECT_CASH_PLATFORM_IDS = ["venmo", "cashapp", "revolut", "zelle", "wise", "paypal", "chime", "monzo", "upi", "xmoney"] as const;
 export type DirectCashPlatformId = (typeof DIRECT_CASH_PLATFORM_IDS)[number];
 
 export const DIRECT_CASH_PLATFORMS: PeerPlatform[] = DIRECT_CASH_PLATFORM_IDS.map(
