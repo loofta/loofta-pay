@@ -4,6 +4,7 @@ import { Reflector } from '@nestjs/core';
 import { AuthGuard } from './auth.guard';
 import { OptionalAuthGuard } from './optional-auth.guard';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
+import { SupabaseService } from '@/database/supabase.service';
 
 // ────────────────────────────────────────────────────────────────
 // Helpers
@@ -70,6 +71,36 @@ describe('AuthGuard', () => {
       privy.hasVerifiedIdentity.mockResolvedValue(true);
       const ctx = makeContext({ authorization: `Bearer ${VALID_TOKEN}` });
       await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    });
+  });
+
+  // An account with no app_users row never signed in through the Loofta app (sign-in creates the row) —
+  // that is how scripted attacker accounts looked on 2026-11-20.
+  describe('accounts without an app_users row', () => {
+    async function guardWithRow(row: { suspended_at: string | null } | null) {
+      const supabase = {
+        appUsers: { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }) },
+      } as unknown as SupabaseService;
+      const mod = await Test.createTestingModule({
+        providers: [AuthGuard, Reflector, { provide: PrivyVerificationService, useValue: privy }, { provide: SupabaseService, useValue: supabase }],
+      }).compile();
+      return mod.get(AuthGuard);
+    }
+
+    it('rejects an authenticated account that has no row', async () => {
+      const g = await guardWithRow(null);
+      await expect(g.canActivate(makeContext({ authorization: `Bearer ${VALID_TOKEN}` }))).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows an account that has a row', async () => {
+      const g = await guardWithRow({ suspended_at: null });
+      await expect(g.canActivate(makeContext({ authorization: `Bearer ${VALID_TOKEN}` }))).resolves.toBe(true);
+    });
+
+    it('rejects a suspended account', async () => {
+      privy.verifyAccessToken.mockResolvedValue('did:privy:suspended_user');
+      const g = await guardWithRow({ suspended_at: new Date().toISOString() });
+      await expect(g.canActivate(makeContext({ authorization: `Bearer ${VALID_TOKEN}` }))).rejects.toThrow(ForbiddenException);
     });
   });
 

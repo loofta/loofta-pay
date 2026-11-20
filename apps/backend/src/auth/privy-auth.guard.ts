@@ -6,8 +6,7 @@ import {
   ForbiddenException,
   Optional,
 } from '@nestjs/common';
-import { Reflector, ModuleRef } from '@nestjs/core';
-import { ensureAppUserRow } from '@/common/guards/ensure-app-user';
+import { Reflector } from '@nestjs/core';
 import { SupabaseService } from '@/database/supabase.service';
 import { ALLOW_WALLET_ONLY_KEY } from '@/common/guards/allow-wallet-only';
 import { assertVerifiedIdentity } from '@/common/guards/verified-identity.guard';
@@ -22,7 +21,6 @@ export class PrivyAuthGuard implements CanActivate {
   constructor(
     private readonly privy: PrivyVerificationService,
     private readonly reflector: Reflector,
-    private readonly moduleRef: ModuleRef,
     @Optional() private readonly supabase?: SupabaseService,
   ) {}
 
@@ -40,9 +38,9 @@ export class PrivyAuthGuard implements CanActivate {
       // guard (mini-app pay, on-ramp, rewards) gets the same suspension + verified-identity rules as AuthGuard.
       const allowWalletOnly = this.reflector.getAllAndOverride<boolean>(ALLOW_WALLET_ONLY_KEY, [context.getHandler(), context.getClass()]);
       if (!allowWalletOnly) {
-        await ensureAppUserRow(this.moduleRef, userId, request);
         if (this.supabase) {
-          const { data } = await this.supabase.appUsers.select('suspended_at').eq('privy_user_id', userId).maybeSingle();
+          const { data, error } = await this.supabase.appUsers.select('suspended_at').eq('privy_user_id', userId).maybeSingle();
+          if (!error && !data) throw new ForbiddenException('Please sign in from the Loofta app to continue.');
           if (data?.suspended_at) throw new ForbiddenException('Your account has been suspended. Contact hello@loofta.xyz.');
         }
         await assertVerifiedIdentity(this.privy, this.supabase, userId);
