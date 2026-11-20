@@ -587,6 +587,44 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         }
       }
 
+      // from_sender payments: the sender must never be able to declare "paid" on their own word.
+      // Previously only request links and guests were verified, so the creator could PATCH
+      // SUCCESS with no txHash at all (forged payments, 2026-11-20). Require a unique tx hash and,
+      // for public transfers, proof on-chain that it landed in this payment's burner/recipient.
+      if (isPayerLegSettling && !isGuestAttempt && ep.direction !== "from_recipient") {
+        const sig = typeof txHash === "string" ? txHash.trim() : "";
+        if (sig.length < 32 || sig.length > 100) {
+          return NextResponse.json({ error: "A transaction signature is required to mark this as paid." }, { status: 400 });
+        }
+        const { data: dupes } = await supabase.from("payments").select("id").eq("sender_tx_hash", sig).neq("id", paymentId).limit(1);
+        if (dupes && dupes.length > 0) {
+          return NextResponse.json({ error: "This transaction is already attached to another payment." }, { status: 400 });
+        }
+        if (isPrivate === true) {
+          // MagicBlock receipts are not visible to the base RPC; only a transfer the server itself prepared counts.
+          if ((existingPayment as { is_private?: boolean | null }).is_private !== true) {
+            return NextResponse.json({ error: "No private transfer was prepared for this payment." }, { status: 403 });
+          }
+        } else {
+          const destination = (ep.burner_address || recipientAddress || "").trim();
+          if (!destination || destination.startsWith("PENDING_")) {
+            return NextResponse.json({ error: "This payment has no verifiable destination yet." }, { status: 400 });
+          }
+          const callerWallets = await getVerifiedSolanaWallets(userId as string);
+          const verification = await verifySolanaUsdcPayment({
+            txHash: sig,
+            destinationWallet: destination,
+            minAmountUsd: Number(ep.amount) || 0,
+            callerWalletAddresses: callerWallets,
+            isDevnet: !!ep.is_devnet,
+          });
+          if (!verification.valid) {
+            console.warn(`[payments/PATCH] Rejected unverified ${status} on ${paymentId} by ${userId}: ${verification.reason}`);
+            return NextResponse.json({ error: verification.reason || "Could not verify this payment on-chain." }, { status: 400 });
+          }
+        }
+      }
+
       // For CANCELLED: only the creator can cancel
       if (status === "CANCELLED") {
         if (ep.created_by && ep.created_by !== userId) {

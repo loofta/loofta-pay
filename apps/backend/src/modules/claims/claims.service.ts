@@ -3794,6 +3794,97 @@ export class ClaimsService {
   }
 
   /**
+   * A client may never decide that a payment happened. Before any client-supplied txHash is
+   * stored or trusted it must (1) not already belong to another payment, and (2) for public
+   * transfers, be a real, successful, recent transaction that actually moved at least the
+   * payment amount into this claim's burner / direct recipient. Fails closed.
+   *
+   * Private (MagicBlock) sends settle on the ephemeral rollup, which the base RPC cannot see, so
+   * for those only the uniqueness check and the server-built-transfer flag can be enforced here.
+   */
+  async assertClientTxHash(id: string, txHash: string, row: Record<string, unknown>, isPrivate: boolean, requireChain = true): Promise<void> {
+    const sig = (txHash || '').trim();
+    if (sig.length < 32 || sig.length > 100) throw new BadRequestException('A valid transaction signature is required.');
+
+    const { data: dupes } = await this.supabaseService.payments
+      .select('id')
+      .eq('sender_tx_hash', sig)
+      .neq('id', row.id as string)
+      .limit(1);
+    if (dupes && dupes.length > 0) throw new BadRequestException('This transaction is already attached to another payment.');
+
+    if (isPrivate) {
+      if (row.is_private !== true) throw new ForbiddenException('No private transfer was prepared for this payment.');
+      return;
+    }
+    // Just broadcast, not yet visible: only uniqueness is enforced; the verifier cron re-runs this with requireChain.
+    if (!requireChain) return;
+
+    const destination = this.resolveEffectiveRecipientForPrivatePayment(row as unknown as Claim & { claim_burner_address?: string | null });
+    if (!destination) throw new BadRequestException('This payment has no on-chain destination to verify against.');
+    const { conn, claimMint } = this.resolveClaimNetwork(row as unknown as Claim);
+    let tx;
+    try {
+      tx = await conn.getParsedTransaction(sig, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
+    } catch {
+      throw new BadRequestException('Could not look up this transaction.');
+    }
+    if (!tx || tx.meta?.err) throw new BadRequestException('Transaction not found or failed on-chain.');
+    const ageSec = Date.now() / 1000 - (tx.blockTime ?? 0);
+    if (!tx.blockTime || ageSec > 30 * 60 || ageSec < -30) throw new BadRequestException('This transaction is too old to prove this payment.');
+
+    const mint = claimMint.toBase58();
+    const sum = (rows: Array<{ owner?: string; mint: string; uiTokenAmount: { amount: string } }> | null | undefined) =>
+      (rows ?? []).filter((b) => b.owner === destination && b.mint === mint).reduce((a, b) => a + Number(b.uiTokenAmount.amount), 0);
+    const delta = sum(tx.meta?.postTokenBalances) - sum(tx.meta?.preTokenBalances);
+    const baseUnits = Number(row.token_base_units) || Math.round((Number(row.amount) || 0) * 1_000_000);
+    if (!(baseUnits > 0) || delta < baseUnits * 0.99) {
+      throw new BadRequestException('This transaction did not pay this request.');
+    }
+  }
+
+  /**
+   * The only entry point for a status change that originates from a browser/API client.
+   * Clients can report that THEY paid (IN_FLIGHT/SUCCESS with a verified txHash) or cancel their
+   * own unpaid claim. Nothing else: no REFUNDED/EXPIRED/PENDING_*, no recipientSwept, no recipient.
+   */
+  async updateStatusFromClient(
+    id: string,
+    status: string,
+    extra: { txHash?: string; paidWith?: string; isPrivate?: boolean; paidWithToken?: string; paidWithChain?: string; feeAmountUsdc?: number },
+    userId: string,
+  ): Promise<Claim> {
+    const result = await this.fetchRawRow(id);
+    if (!result) throw new NotFoundException(`Claim with ID ${id} not found`);
+    const row = result.row;
+    const next = String(status || '').toUpperCase();
+    const current = String(row.status || '').toUpperCase();
+
+    if (!row.created_by || row.created_by !== userId) throw new ForbiddenException('Not authorized to update this payment');
+    if (!['IN_FLIGHT', 'SUCCESS', 'PRIVATE_TRANSFER_PENDING', 'CANCELLED'].includes(next)) {
+      throw new ForbiddenException('This status cannot be set by the client.');
+    }
+    if (next === 'CANCELLED') {
+      if (!['OPEN', 'PENDING', 'PENDING_DEPOSIT'].includes(current)) throw new BadRequestException('This payment can no longer be cancelled.');
+      return this.updateStatus(id, 'CANCELLED' as ClaimStatus, undefined, userId);
+    }
+    if (!['OPEN', 'PENDING', 'PENDING_DEPOSIT', 'IN_FLIGHT'].includes(current)) {
+      throw new BadRequestException('This payment is not awaiting funding.');
+    }
+    // PRIVATE_TRANSFER_PENDING from a client is just SUCCESS on a burner claim (updateStatus downgrades it).
+    const finalStatus = next === 'IN_FLIGHT' ? 'IN_FLIGHT' : 'SUCCESS';
+    await this.assertClientTxHash(row.id as string, extra.txHash ?? '', row, extra.isPrivate === true, finalStatus === 'SUCCESS');
+    return this.updateStatus(id, finalStatus as ClaimStatus, {
+      txHash: extra.txHash!.trim(),
+      paidWith: extra.paidWith,
+      isPrivate: extra.isPrivate === true ? true : undefined,
+      paidWithToken: extra.paidWithToken,
+      paidWithChain: extra.paidWithChain,
+      feeAmountUsdc: typeof extra.feeAmountUsdc === 'number' && extra.feeAmountUsdc >= 0 && extra.feeAmountUsdc < 1000 ? extra.feeAmountUsdc : undefined,
+    }, userId);
+  }
+
+  /**
    * Update claim status. When status is SUCCESS and createdByUserId is provided, backfill created_by if currently null (so payment shows in history).
    * For CANCELLED: if callerUserId is provided, enforces that only the creator can cancel.
    */
@@ -4261,6 +4352,10 @@ export class ClaimsService {
    * (incident 2026-07-24, claim b665e249). Burner claims are the sweep cron's job
    * (cronSweepPendingBurners) and the recipient's own claim action — never this verifier's.
    */
+  async getRawRowForVerification(id: string): Promise<Record<string, unknown> | null> {
+    return (await this.fetchRawRow(id))?.row ?? null;
+  }
+
   async getPendingTxHashClaims(): Promise<{ id: string; sender_tx_hash: string; created_at: string }[]> {
     const { data, error } = await this.supabaseService.payments
       .select('id, sender_tx_hash, created_at')
@@ -4309,7 +4404,11 @@ export class ClaimsService {
    * Save the broadcast transaction signature immediately after sendRawTransaction, before
    * confirmation polling completes. Enables recovery if the RPC polling times out.
    */
-  async saveBroadcastTxHash(id: string, txHash: string): Promise<void> {
+  async saveBroadcastTxHash(id: string, txHash: string, userId: string): Promise<void> {
+    const result = await this.fetchRawRow(id);
+    if (!result) throw new NotFoundException(`Claim with ID ${id} not found`);
+    if (!result.row.created_by || result.row.created_by !== userId) throw new ForbiddenException('Not authorized to update this payment');
+    await this.assertClientTxHash(result.row.id as string, txHash, result.row, result.row.is_private === true, false);
     const { error } = await this.updateRow(
       id,
       { sender_tx_hash: txHash },

@@ -126,6 +126,15 @@ export class SolanaTxVerifierService {
         return { claimId, txHash, action: 'confirmed' };
       }
       this.logger.log(`[SolanaTxVerifier] ✅ ${txHash.slice(0, 12)}… confirmed — upgrading claim ${claimId} to SUCCESS`);
+      // The saved hash came from the client: confirm it really paid THIS claim before promoting.
+      try {
+        const raw = await this.claimsService.getRawRowForVerification(claimId);
+        if (!raw) return { claimId, txHash, action: 'skipped', error: 'claim not found' };
+        await this.claimsService.assertClientTxHash(claimId, txHash, raw, raw.is_private === true, true);
+      } catch (e: any) {
+        this.logger.warn(`[SolanaTxVerifier] claim ${claimId}: tx does not pay this claim (${e?.message}) — not promoting`);
+        return { claimId, txHash, action: 'failed', error: e?.message };
+      }
       // getPendingTxHashClaims() only ever returns burner_address IS NULL rows — a single-leg
       // sender→recipient transfer with no burner hop, which can never be private.
       await this.claimsService.updateStatus(claimId, 'SUCCESS', {

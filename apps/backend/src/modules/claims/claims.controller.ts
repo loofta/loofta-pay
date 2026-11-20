@@ -736,14 +736,13 @@ export class ClaimsController {
     },
     @Req() req: { user?: { id: string } },
   ): Promise<Claim> {
-    const result = await this.claimsService.updateStatus(id, body.status as any, {
+    const result = await this.claimsService.updateStatusFromClient(id, body.status, {
       txHash: body.txHash,
       paidWith: body.paidWith,
       isPrivate: body.isPrivate,
       paidWithToken: body.paidWithToken,
       paidWithChain: body.paidWithChain,
       feeAmountUsdc: body.feeAmountUsdc,
-      feeBreakdown: body.feeBreakdown,
     }, req.user!.id);
     const effectiveStatus = (result.status || '').toUpperCase();
     if (effectiveStatus === 'SUCCESS' || effectiveStatus === 'PRIVATE_TRANSFER_PENDING') {
@@ -780,9 +779,10 @@ export class ClaimsController {
   async saveTxHash(
     @Param('id') id: string,
     @Body() body: { txHash: string },
+    @Req() req: { user?: { id: string } },
   ): Promise<void> {
     if (!body.txHash?.trim()) throw new BadRequestException('txHash is required');
-    await this.claimsService.saveBroadcastTxHash(id, body.txHash.trim());
+    await this.claimsService.saveBroadcastTxHash(id, body.txHash.trim(), req.user!.id);
   }
 
   /**
