@@ -568,20 +568,20 @@ export class OfframpService {
       throw new ForbiddenException('baseWalletAddress must be one of your own linked wallets');
     }
     const solanaAddress = await this.usersService.getSolanaWalletAddress(userId, { skipCache: true });
-    const [baseUsdcId, solanaUsdcId] = await Promise.all([
-      this.nearIntents.getDefuseAssetId('USDC', 'base'),
-      this.nearIntents.getDefuseAssetId('USDC', 'solana'),
-    ]);
-    const quote = await this.nearIntents.getDepositQuote({
-      fromToken: { tokenId: baseUsdcId,   chain: 'base',   symbol: 'USDC', decimals: 6 },
-      toToken:   { tokenId: solanaUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
-      amountIn:  amountUsdc.toString(),
-      recipient: solanaAddress,
-      refundAddress: baseWalletAddress,
-    });
-    if (!quote.depositAddress) throw new BadRequestException('Could not get a bridge address');
-    this.logger.log(`rescue bridge-back: user=${userId} base=${baseWalletAddress} amount=${amountUsdc}`);
-    return { depositAddress: quote.depositAddress, memo: quote.memo ?? null, amountUsdc };
+    // Relay: plain transfer to a one-time deposit address, about $0.04 and seconds. Refunds go to the same wallet.
+    let quote: Awaited<ReturnType<RelayService['getBaseToSolDepositAddress']>>;
+    try {
+      quote = await this.relay.getBaseToSolDepositAddress({
+        fromAddress: baseWalletAddress,
+        toAddress: solanaAddress,
+        amountUnits: BigInt(Math.round(amountUsdc * 1_000_000)),
+      });
+    } catch (err) {
+      this.logger.warn(`rescue bridge-back quote failed: ${err instanceof Error ? err.message : err}`);
+      throw new BadRequestException('Could not get a bridge address. Try again in a minute.');
+    }
+    this.logger.log(`rescue bridge-back (relay): user=${userId} base=${baseWalletAddress} amount=${amountUsdc} request=${quote.requestId}`);
+    return { depositAddress: quote.depositAddress, memo: null, amountUsdc, requestId: quote.requestId };
   }
 
   // Returns the latest non-terminal offramp record for a user (for session recovery on the frontend).

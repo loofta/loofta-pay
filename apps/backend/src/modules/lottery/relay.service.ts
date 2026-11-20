@@ -243,6 +243,42 @@ export class RelayService {
   }
 
   /**
+   * Base USDC → Solana USDC in DEPOSIT ADDRESS mode: the user just sends a plain USDC transfer to the
+   * returned one-time address, no approve/router call. Funds that fail to bridge are refunded to
+   * `fromAddress`. Used by the stranded-USDC rescue (about $0.04 and seconds, vs. Near's fee and minutes).
+   */
+  async getBaseToSolDepositAddress(opts: { fromAddress: string; toAddress: string; amountUnits: bigint }): Promise<{
+    requestId: string;
+    depositAddress: string;
+    receiveUnits: bigint;
+  }> {
+    const res = await fetch(`${RELAY_API}/quote/v2`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        user: opts.fromAddress,
+        recipient: opts.toAddress,
+        originChainId: BASE_CHAIN_ID,
+        destinationChainId: SOLANA_CHAIN_ID,
+        originCurrency: BASE_USDC,
+        destinationCurrency: SOL_USDC_MINT,
+        amount: opts.amountUnits.toString(),
+        tradeType: 'EXACT_INPUT',
+        refundTo: opts.fromAddress,
+        useDepositAddress: true,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.message ? `Relay: ${json.message}` : `Relay quote failed (${res.status})`);
+    const step = (json.steps ?? []).find((s: any) => s?.depositAddress);
+    const requestId: string | undefined = step?.requestId ?? json.requestId;
+    if (!step?.depositAddress || !requestId) throw new Error('Relay returned no deposit address');
+    const receiveUnits = BigInt(json.details?.currencyOut?.minimumAmount ?? json.details?.currencyOut?.amount ?? '0');
+    return { requestId, depositAddress: step.depositAddress, receiveUnits };
+  }
+
+  /**
    * Display-only fee estimate for a Base→Solana withdrawal of `amountUsdc` — no funds ever move
    * to `toAddress` here, it only exists so Relay has a syntactically valid recipient to quote
    * against. Was '11111111111111111111111111111111' (the System Program ID) — Relay tightened
