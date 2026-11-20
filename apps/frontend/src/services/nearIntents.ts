@@ -38,17 +38,13 @@ export type NearToken = {
 };
 
 import { resolveTokenLogo } from "@/lib/tokenImages";
-import { usableJwt } from "@/lib/usableJwt";
 import { getDefuseAssetIdFor, getIconForAssetId } from "@/lib/tokenlist";
 // Removed getRefundToForChain - now using user-provided refund addresses only
 
 // Configure SDK base/token once
 // Match 1-click examples: https://1click.chaindefuser.com
 OpenAPI.BASE = ONECLICK_API_BASE;
-const oneClickToken = usableJwt(typeof process !== "undefined" ? (process as any).env?.NEXT_PUBLIC_ONECLICK_JWT : undefined);
-if (oneClickToken) {
-  OpenAPI.TOKEN = oneClickToken;
-}
+// The 1Click token lives only on the server as ONECLICK_JWT (see /api/deposit/quote). The browser never holds it.
 
 function mapSdkToken(t: any): NearToken {
   // Match intents-swap-widget shape: prefer backend icon, chain lowercase, use assetId

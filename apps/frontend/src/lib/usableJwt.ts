@@ -14,7 +14,7 @@ export function usableJwt(token: string | undefined | null): string | undefined 
     const json = typeof atob === "function" ? atob(b64) : Buffer.from(b64, "base64").toString("utf8");
     const exp = Number(JSON.parse(json)?.exp);
     if (Number.isFinite(exp) && exp * 1000 <= Date.now()) {
-      console.warn("[1click] JWT expired, calling without it. Rotate ONECLICK_JWT / NEXT_PUBLIC_ONECLICK_JWT.");
+      console.warn("[1click] JWT expired, calling without it. Rotate ONECLICK_JWT.");
       return undefined;
     }
   } catch {

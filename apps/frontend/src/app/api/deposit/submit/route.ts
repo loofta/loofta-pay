@@ -15,7 +15,7 @@ function getEnv(name: string, fallbacks: string[] = []) {
 }
 
 const ONECLICK_BASE = getEnv("ONECLICK_API_BASE", ["NEXT_PUBLIC_ONECLICK_API_BASE"]) || "https://1click.chaindefuser.com";
-const ONECLICK_JWT = usableJwt(getEnv("ONECLICK_JWT", ["NEXT_PUBLIC_ONECLICK_JWT"]));
+const ONECLICK_JWT = usableJwt(getEnv("ONECLICK_JWT"));
 
 export async function POST(request: Request) {
   const userId = await getVerifiedUserId(request);

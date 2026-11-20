@@ -527,6 +527,50 @@ export class SendPaymentService {
     );
   }
 
+  /**
+   * Which of these payments did `txHash` really pay? The transaction must exist, have succeeded, be recent, and have
+   * moved at least the row's amount of USDC to that row's destination (its burner, or the recipient wallet for a
+   * direct send). Amounts are taken per destination once, so one small real transfer cannot back several rows.
+   */
+  private async provenMultiSendRows(txHash: string, rows: Array<Record<string, unknown>>): Promise<Set<string>> {
+    const proven = new Set<string>();
+    if (!rows.length) return proven;
+    // Clients confirm right after broadcasting (fire-and-forget, no retry), so give a just-sent transaction a few
+    // seconds to become visible before deciding it does not exist.
+    let tx = null;
+    for (let attempt = 0; attempt < 8 && !tx; attempt++) {
+      try {
+        tx = await this.connection.getParsedTransaction(txHash, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
+      } catch {
+        tx = null;
+      }
+      if (!tx) await new Promise((r) => setTimeout(r, 1500));
+    }
+    if (!tx || tx.meta?.err || !tx.blockTime) return proven;
+    const ageSec = Date.now() / 1000 - tx.blockTime;
+    if (ageSec > 30 * 60 || ageSec < -30) return proven;
+    const mint = this.usdcMint.toBase58();
+    const total = (balances: Array<{ owner?: string; mint: string; uiTokenAmount: { amount: string } }> | null | undefined) => {
+      const m = new Map<string, number>();
+      for (const b of balances ?? []) if (b.mint === mint && b.owner) m.set(b.owner, (m.get(b.owner) ?? 0) + Number(b.uiTokenAmount.amount));
+      return m;
+    };
+    const pre = total(tx.meta?.preTokenBalances);
+    const post = total(tx.meta?.postTokenBalances);
+    const remaining = new Map<string, number>();
+    for (const [owner, amt] of post) remaining.set(owner, amt - (pre.get(owner) ?? 0));
+    for (const row of rows) {
+      const dest = String(row.burner_address || row.recipient_address || '').trim();
+      const units = Math.round(parseFloat(String(row.amount || '0')) * 1_000_000);
+      const left = remaining.get(dest) ?? 0;
+      if (dest && units > 0 && left >= units * 0.99) {
+        remaining.set(dest, left - units);
+        proven.add(row.id as string);
+      }
+    }
+    return proven;
+  }
+
   async confirmMultiSend(senderUserId: string, paymentIds: string[], txHash?: string, feeUsdc?: number, clientIp?: string): Promise<void> {
     if (!paymentIds.length) return;
 
@@ -540,11 +584,16 @@ export class SendPaymentService {
       );
       throw new BadRequestException('tx_hash is not a valid Solana transaction signature');
     }
+    // A hash is mandatory: without one there is nothing to prove the money moved (2026-11-20: rows were marked paid,
+    // and the recipients emailed, off made-up and reused hashes).
+    if (!txHash) throw new BadRequestException('tx_hash is required');
 
     // Fetch rows first so we can split registered vs unregistered and compute per-row fees
     const { data: rows, error: fetchError } = await this.supabaseService.payments
-      .select('id, amount, recipient_email, recipient_username, recipient_was_unregistered, burner_address, description')
-      .in('id', paymentIds);
+      .select('id, amount, recipient_email, recipient_username, recipient_was_unregistered, burner_address, recipient_address, description, is_devnet')
+      .in('id', paymentIds)
+      .eq('sender_user_id', senderUserId)
+      .eq('status', 'OPEN');
     if (fetchError) {
       this.logger.warn(`[MultiSend] confirmMultiSend fetch failure: ${fetchError.message}`);
       return;
@@ -552,6 +601,9 @@ export class SendPaymentService {
 
     const now = new Date().toISOString();
     const allRows = rows ?? [];
+
+    // Only rows this transaction really paid get marked (and emailed).
+    const provenIds = await this.provenMultiSendRows(txHash, allRows);
 
     // Compute fee per payment from stored amount (server-side; frontend value used as hint only)
     const computedFeeByPaymentId = new Map<string, number>(
@@ -571,6 +623,10 @@ export class SendPaymentService {
     // Update each payment individually so each gets its own computed fee
     for (const row of allRows) {
       const paymentId = row.id as string;
+      if (!provenIds.has(paymentId)) {
+        this.logger.warn(`[MultiSend] REJECTED unproven confirm — user=${senderUserId} payment=${paymentId} tx=${txHash.slice(0, 12)} ip=${clientIp ?? 'unknown'}`);
+        continue;
+      }
       const rowFee = computedFeeByPaymentId.get(paymentId);
       const isUnregistered = !!row.recipient_was_unregistered;
       // A registered recipient can still have a burner_address set — the private fan-out
@@ -592,7 +648,8 @@ export class SendPaymentService {
       const { error } = await this.supabaseService.payments
         .update(updatePayload)
         .eq('id', paymentId)
-        .eq('sender_user_id', senderUserId);
+        .eq('sender_user_id', senderUserId)
+        .eq('status', 'OPEN');
       if (error) {
         this.logger.warn(`[MultiSend] confirmMultiSend update failure id=${paymentId}: ${error.message}`);
       } else {
