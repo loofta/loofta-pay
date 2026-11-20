@@ -1,5 +1,6 @@
 'use client'
 import { clientApiBase } from "@/services/api/client";
+import { track, trackOnce, usdBucket } from "@/lib/analytics";
 
 import React, { useEffect, useMemo, useRef, useState, type SVGProps } from "react";
 import Link from "next/link";
@@ -331,6 +332,14 @@ function IncognitoCardBadge() {
       </TooltipProvider>
     </motion.div>
   );
+}
+
+type ClaimAnalyticsOpts = { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; payoutMethod?: string } | undefined;
+
+/** Which destination the recipient picked, for claim_* events: paj (Naira), near/coinbase/external payouts, a custom address, or plain Loofta wallet. */
+function claimAnalyticsProps(opts: ClaimAnalyticsOpts, amount?: string | number | null) {
+  const destination = opts?.claimToNaira ? "paj" : opts?.payoutMethod ?? (opts?.destinationAddress ? "external_address" : "loofta_wallet");
+  return { destination, is_private: !!opts?.claimPrivately, amount_bucket: usdBucket(amount == null ? undefined : Number(amount)) };
 }
 
 function ClaimPayLayout({
@@ -2068,6 +2077,7 @@ export function ClaimPayView({
     mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number; payoutMethod?: string; payoutStatus?: string; payoutEtaLabel?: string | null; payoutDetail?: string | null }) => {
       const backendUrl = clientApiBase();
       console.info("[Claim] Initiating claim for:", id, "user:", user?.id?.slice(0, 12), "opts:", opts);
+      track("claim_started", claimAnalyticsProps(opts, claim?.amount));
       const claimToken = await getAccessToken();
       const claimResp = await fetch(`${backendUrl}/claims/${id}/claim`, {
         method: "POST",
@@ -2157,6 +2167,7 @@ export function ClaimPayView({
       return { prevClaim, prevHistories };
     },
     onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean; feeAmountUsdc?: number } | undefined, _vars, context) => {
+      trackOnce(`claim_completed:${id}`, "claim_completed", claimAnalyticsProps(_vars, claim?.amount));
       setClaimCompleted(true);
       setStatus("SUCCESS");
       useClaimPayStore.getState().setClaimed(id, true);
@@ -2188,6 +2199,7 @@ export function ClaimPayView({
         queryClient.setQueryData(key, data);
       }
       const message = error instanceof Error ? error.message : "Claim failed";
+      track("claim_failed", { ...claimAnalyticsProps(_vars, claim?.amount), reason: message.slice(0, 120) });
       toast({ variant: "destructive", title: "Claim failed", description: message });
     },
   });
@@ -3875,6 +3887,16 @@ export function ClaimPayView({
   const isGuestCreatedClaim = !claim?.created_by;
   const showGuestCheckout = !DEMO_MODE && !!claim?.claim_burner_address && (chrome === "minimal" || (isGuestCreatedClaim && !authenticated));
   const isCreatorView = !!user?.id && claim?.created_by === viewerId;
+  useEffect(() => {
+    if (!claim?.id) return;
+    trackOnce(`claim_page_viewed:${claim.id}`, "claim_page_viewed", {
+      role: isCreatorView ? "payer" : "recipient_or_visitor",
+      status: String(claim.status || "").toUpperCase() || undefined,
+      amount_bucket: usdBucket(Number(claim.amount)),
+      logged_in: !!user?.id,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim?.id]);
   // Guest sender returning from the one-step Send flow: no account to match, only this device's
   // local record (see markGuestSentClaim). Read after mount so SSR/hydration agree.
   const [sentByThisGuestDevice, setSentByThisGuestDevice] = useState(false);

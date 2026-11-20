@@ -1,5 +1,6 @@
 'use client'
 
+import { track, usdBucket } from "@/lib/analytics";
 import { useState, useEffect, useRef, type ReactNode, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -679,6 +680,12 @@ export default function Home() {
         else if (sendMethod === "social" && socialPlatform) rememberRecipient({ kind: "social", platform: socialPlatform, value: trimmed.replace(/^loo-/i, "").toLowerCase() });
       }
       const payingPrivate = isPrivateMode || payTarget.requirePrivatePayments;
+      track("payment_started", {
+        recipient_type: lockedRecipient ? "personal_link" : treatingAsEmail ? "email" : sendMethod === "social" ? (socialPlatform ?? "social") : sendMethod === "username" ? "username" : "x_handle",
+        amount_bucket: usdBucket(amountNum),
+        is_private: payingPrivate,
+        has_description: !!fullDescription,
+      });
       router.push(`/c/${result.id}?pay=1${payingPrivate ? `&split=${split}&delayMs=${delayMs}` : ""}`);
     } catch (e: unknown) {
       toast({

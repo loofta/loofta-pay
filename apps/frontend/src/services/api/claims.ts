@@ -6,6 +6,7 @@
  */
 
 import { fetchApi } from './client';
+import { trackOnce } from '@/lib/analytics';
 import type { MagicblockTxResponse } from '../magicblockPaymentsApi';
 
 // ===========================================
@@ -132,12 +133,24 @@ export async function updateClaimStatus(
   userId?: string,
   accessToken?: string | null,
 ): Promise<{ claim: Claim }> {
-  return fetchApi<{ claim: Claim }>(`/claims/${id}/status`, {
+  const result = await fetchApi<{ claim: Claim }>(`/claims/${id}/status`, {
     method: 'POST',
     body: JSON.stringify({ status, ...extra }),
     userId,
     accessToken,
   });
+  // Every pay path (balance, wallet, private, cross-chain, recovery) reports its outcome here.
+  const outcome = status === 'SUCCESS' ? 'payment_completed' : status === 'REFUNDED' ? 'payment_failed' : null;
+  if (outcome) {
+    trackOnce(`${outcome}:${id}:${status}`, outcome, {
+      status,
+      paid_with: extra?.paidWith,
+      paid_token: extra?.paidWithToken,
+      paid_chain: extra?.paidWithChain,
+      is_private: extra?.isPrivate,
+    });
+  }
+  return result;
 }
 
 export async function countersignAndBroadcastPER(

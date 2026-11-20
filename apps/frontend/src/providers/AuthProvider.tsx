@@ -6,6 +6,7 @@ import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 import { getSolanaCluster, getSolanaHttpRpc, getSolanaWsRpc } from "@/lib/solanaCluster";
 import { useDashboardStore } from "@/store/dashboard";
 import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import React, { useEffect, useRef } from "react";
 
 function SolanaPlugins() {
@@ -13,9 +14,36 @@ function SolanaPlugins() {
   return null;
 }
 
+type PrivyUserLike = {
+  id?: string;
+  createdAt?: Date | string | number;
+  linkedAccounts?: Array<{ type?: string; latestVerifiedAt?: Date | string | number | null }>;
+} | null | undefined;
+
+/** signed_up (new account, once per user per browser) or logged_in, with the method that was just used. */
+function trackAuthEvent(user: PrivyUserLike) {
+  if (!user?.id) return;
+  const accounts = user.linkedAccounts ?? [];
+  const latest = [...accounts].sort((a, b) => new Date(b.latestVerifiedAt ?? 0).getTime() - new Date(a.latestVerifiedAt ?? 0).getTime())[0];
+  const method = latest?.type ?? "unknown";
+  const createdMs = user.createdAt ? new Date(user.createdAt).getTime() : 0;
+  const isNew = createdMs > 0 && Date.now() - createdMs < 5 * 60_000;
+  const flagKey = `loofta_signed_up_${user.id}`;
+  let alreadyCounted = false;
+  try { alreadyCounted = !!localStorage.getItem(flagKey); } catch { /* storage blocked */ }
+  if (isNew && !alreadyCounted) {
+    try { localStorage.setItem(flagKey, "1"); } catch { /* storage blocked */ }
+    track("signed_up", { method, has_wallet: accounts.some((a) => a.type === "wallet") });
+  } else {
+    track("logged_in", { method });
+  }
+}
+
 function PostHogIdentity() {
   const { ready, authenticated, user } = usePrivy();
   const identifiedUserId = useRef<string | null>(null);
+  // Only a login seen after a logged-out state counts; a page reload while signed in is not a login.
+  const sawLoggedOut = useRef(false);
   const userId = user?.id;
   const email = user?.email?.address;
   const posthogConfigured = Boolean(
@@ -32,9 +60,15 @@ function PostHogIdentity() {
       if (identifiedUserId.current !== userId && posthogConfigured) {
         posthog.identify(userId, { ...(email ? { email } : {}) });
         identifiedUserId.current = userId;
+        if (sawLoggedOut.current) {
+          sawLoggedOut.current = false;
+          trackAuthEvent(user);
+        }
       }
       return;
     }
+
+    sawLoggedOut.current = true;
 
     if (identifiedUserId.current && posthogConfigured) posthog.reset();
     identifiedUserId.current = null;

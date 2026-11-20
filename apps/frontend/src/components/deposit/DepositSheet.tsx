@@ -39,6 +39,7 @@ import { getPrivySolanaChainForMode, getRpcForMode, getUsdcMintForMode } from "@
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { cn } from "@/lib/utils";
+import { track, trackOnce, usdBucket } from "@/lib/analytics";
 import { StakeUpsellCard } from "@/components/StakeUpsellCard";
 import { STAKE_UPSELL_MIN_BALANCE_USDC, useStakeUpsell } from "@/hooks/useStakeUpsell";
 import { findUsdcOnBase, findUsdcOnSolana, readDepositPrivately, writeDepositPrivately } from "@/lib/depositRails";
@@ -158,6 +159,13 @@ export function DepositSheet({
     if (initialMode === "withdraw" && initialScreen !== "home") setScreen(initialScreen);
   }, [open, launch, initialMode, initialScreen]);
 
+  // A deposit method screen opening is the start of a deposit attempt.
+  useEffect(() => {
+    if (!open || mode !== "deposit" || screen === "home") return;
+    track("deposit_started", { method: screen, is_private: privately });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode, screen]);
+
   useEffect(() => {
     if (open) return;
     setBlinkError(null);
@@ -180,6 +188,7 @@ export function DepositSheet({
     if (!solanaAddress || blinkDepositing) return;
     setBlinkDepositing(true);
     setBlinkError(null);
+    track("deposit_started", { method: "blink" });
     try {
       blinkDepositRef.current?.destroy();
       const { Deposit } = await import("@swype-org/deposit");
@@ -211,6 +220,7 @@ export function DepositSheet({
       });
       toast({ title: "Deposit complete!", description: "USDC will appear in your balance shortly." });
       const depositedAmount = depositResult?.transfer?.amount?.amount;
+      track("deposit_completed", { method: "blink", amount_bucket: usdBucket(Number(depositedAmount)) });
       try {
         const token = await getAccessToken();
         if (token) {
@@ -225,6 +235,7 @@ export function DepositSheet({
       close();
     } catch (err: unknown) {
       const { DepositError, getDisplayMessage } = await import("@swype-org/deposit");
+      track("deposit_failed", { method: "blink", reason: (err instanceof Error ? err.message : "unknown").slice(0, 120) });
       setBlinkError(err instanceof DepositError ? getDisplayMessage(err) : "Deposit failed. Please try again.");
     } finally {
       blinkDepositRef.current?.destroy();
@@ -768,6 +779,20 @@ function AddressDeposit({
     return () => { cancelled = true; clearInterval(id); };
   }, [address, bridge]);
 
+  useEffect(() => {
+    if (!address || !bridge || !TERMINAL.has(bridge)) return;
+    const done = SUCCESS.has(bridge);
+    trackOnce(`deposit_${bridge}:${address}`, done ? "deposit_completed" : "deposit_failed", {
+      method: "address",
+      is_private: privately,
+      from_chain: token?.chain,
+      from_token: token?.symbol,
+      amount_bucket: usdBucket(Number(out ?? amountNum)),
+      ...(done ? {} : { reason: bridge }),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, bridge]);
+
   const chainLabel = token ? formatChainLabel(token.chain).toUpperCase() : "SOURCE";
 
   return (
@@ -927,6 +952,7 @@ function CardDeposit({
 
   const continueWith = async (chosen: CardProvider) => {
     if (chosen === "peer" && (isMobile || !(amountNum > 0))) return;
+    track("deposit_provider_selected", { provider: chosen });
     if (chosen === "paj") { onPaj(); return; }
     setBusy(true);
     try {
@@ -1136,6 +1162,7 @@ function ConnectWalletPay(props: {
         const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, preflightCommitment: "confirmed" });
         await waitForSignatureConfirmation(connection, signature, 120_000, 1500, "depositWalletPublic");
       }
+      track("deposit_completed", { method: "wallet", is_private: props.privately, amount_bucket: usdBucket(props.amount) });
       props.onRefresh?.();
       toast({
         title: "Sent",
@@ -1143,6 +1170,7 @@ function ConnectWalletPay(props: {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Payment failed";
+      track("deposit_failed", { method: "wallet", is_private: props.privately, rejected: /reject|cancel|denied/i.test(msg), reason: msg.slice(0, 120) });
       if (!/reject|cancel|denied/i.test(msg)) toast({ variant: "destructive", title: "Payment failed", description: msg });
     } finally {
       setPaying(false);
