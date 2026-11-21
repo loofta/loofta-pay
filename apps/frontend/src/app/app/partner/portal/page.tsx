@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { useAuth } from "@/hooks/useAuth";
-import { Btn, Field, Notice, PageHeader, Section, inputCls } from "@/components/partner/ui";
+import { Btn, Field, Notice, inputCls } from "@/components/partner/ui";
 import { post, usePartnerApi } from "@/components/partner/usePartnerApi";
 import { LogoUpload } from "@/components/partner/LogoUpload";
 import { useTreasury } from "@/components/partner/useTreasury";
@@ -18,7 +18,28 @@ import { TeamTab } from "@/components/partner/TeamTab";
 import { DevelopersTab } from "@/components/partner/DevelopersTab";
 import { SettingsTab } from "@/components/partner/SettingsTab";
 
-function CreateOrg({ onCreated }: { onCreated: () => void }) {
+/** Shown while the sign-in state and your companies load: a soft pulse and card skeletons instead of the word "Loading". */
+function PortalLoading() {
+  return (
+    <div className="mx-auto flex w-full max-w-[560px] flex-col items-center pt-[clamp(24px,10vh,120px)] text-center" role="status" aria-live="polite">
+      <div className="relative flex h-16 w-16 items-center justify-center">
+        <span className="absolute inset-0 animate-ping rounded-full bg-[#FF6A1F]/15" />
+        <span className="absolute inset-1 rounded-full border-2 border-[#FF6A1F]/25" />
+        <span className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[#FF6A1F]" />
+        <span className="h-3 w-3 rounded-full bg-[#FF6A1F]" />
+      </div>
+      <p className="mt-6 text-[17px] font-medium text-[color:var(--pt-ink,#EDEDEF)]">Opening your partner portal</p>
+      <p className="mt-1 text-[15px] text-[color:var(--pt-ink3,#9C9CA5)]">One moment.</p>
+      <div className="mt-10 grid w-full grid-cols-3 gap-3 opacity-70" aria-hidden>
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-[88px] animate-pulse rounded-2xl border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)]" style={{ animationDelay: `${i * 150}ms` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CreateOrg({ onCreated, onCancel }: { onCreated: (orgId: string) => void; onCancel?: () => void }) {
   const call = usePartnerApi();
   const [name, setName] = useState("");
   const [logo, setLogo] = useState<string | null>(null);
@@ -28,8 +49,8 @@ function CreateOrg({ onCreated }: { onCreated: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await call("partners", post({ name: name.trim(), ...(logo ? { logo_url: logo } : {}) }));
-      onCreated();
+      const created = await call<{ org_id: string }>("partners", post({ name: name.trim(), ...(logo ? { logo_url: logo } : {}) }));
+      onCreated(created.org_id);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -37,29 +58,29 @@ function CreateOrg({ onCreated }: { onCreated: () => void }) {
     }
   };
   return (
-    <>
-      <PageHeader
-        crumb="Partner portal / Get started"
-        title="Create your partner account"
-        blurb="Pay your creators, partners or affiliates in bulk. They get paid by email and withdraw from a page with your name and logo."
-      />
-      {error && <Notice kind="error">{error}</Notice>}
-      <Section title="Your business" desc="You can add your team and company details afterwards.">
-        <div className="max-w-xl space-y-5">
-          <Field label="Company or product name">
-            <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme" />
-          </Field>
-          <Field label="Logo" optional>
-            <LogoUpload value={logo} onChange={setLogo} />
-          </Field>
-          <div className="flex justify-end">
-            <Btn onClick={submit} disabled={busy || name.trim().length < 2}>
-              {busy ? "Creating..." : "Create account"}
-            </Btn>
-          </div>
-        </div>
-      </Section>
-    </>
+    <div className="mx-auto flex w-full max-w-[520px] flex-col items-center pt-[clamp(8px,4vh,48px)] text-center">
+      <div className="font-mono text-[12.5px] uppercase tracking-[0.14em] text-[color:var(--pt-ink3,#9C9CA5)]">{onCancel ? "New company" : "Get started"}</div>
+      <h1 className="m-0 mt-3 text-[clamp(30px,4vw,40px)] font-semibold leading-[1.1] tracking-[-0.02em] text-[color:var(--pt-ink,#EDEDEF)]">{onCancel ? "Add a company" : "Create your partner account"}</h1>
+      <p className="m-0 mt-3 text-[17px] leading-[1.55] text-[color:var(--pt-ink2,#C9C9D0)]">
+        Pay your people in bulk. They get paid by email and withdraw from a page with your name and logo.
+      </p>
+      {error && <div className="mt-6 w-full text-left"><Notice kind="error">{error}</Notice></div>}
+      <div className="mt-8 w-full space-y-5 rounded-[18px] border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)] p-6 text-left shadow-[0_24px_50px_-30px_rgba(40,25,15,0.25)]">
+        <Field label="Company or product name">
+          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme" />
+        </Field>
+        <Field label="Logo" optional>
+          <LogoUpload value={logo} onChange={setLogo} />
+        </Field>
+        <Btn onClick={submit} disabled={busy || name.trim().length < 2} className="w-full">
+          {busy ? "Creating..." : "Create account"}
+        </Btn>
+      </div>
+      <p className="mt-4 text-[14px] text-[color:var(--pt-ink3,#9C9CA5)]">You can add your team and company details afterwards.</p>
+      {onCancel && (
+        <button type="button" onClick={onCancel} className="mt-2 text-[14px] font-semibold text-[#FF6A1F] hover:underline">Cancel</button>
+      )}
+    </div>
   );
 }
 
@@ -80,6 +101,7 @@ function PartnerContent() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const acceptedRef = useRef(false);
+  const [creating, setCreating] = useState(false);
   const autoLoginRef = useRef(false);
 
   // Nobody lands on a marketing page here: not signed in means the sign-in opens straight away.
@@ -135,8 +157,10 @@ function PartnerContent() {
 
   return (
     <PartnerShell
-      orgs={orgs ?? []}
-      current={current}
+      orgs={authenticated ? orgs ?? [] : []}
+      current={authenticated ? current : null}
+      onAddCompany={authenticated && current ? () => setCreating(true) : undefined}
+      centered={!ready || !authenticated || !current || creating}
       onSelectOrg={(id) => {
         setOrgId(id);
         setCounts(null);
@@ -165,20 +189,40 @@ function PartnerContent() {
       )}
 
       {!ready ? (
-        <p className="text-[15px] text-[#C9C9D0]">Loading...</p>
+        <PortalLoading />
       ) : !authenticated ? (
-        <div className="max-w-md">
-          <p className="text-[17px] text-[#C9C9D0]">
-            {inviteToken ? "Sign in with the email you were invited at to join the team." : "Sign in with your email to open your partner portal. We send you a code."}
+        <div className="mx-auto flex w-full max-w-[460px] flex-col items-center pt-[clamp(8px,6vh,72px)] text-center">
+          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFEDE5] text-[#E8461A]">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M3 9l9 6 9-6" /></svg>
+          </span>
+          <h1 className="m-0 mt-6 text-[clamp(28px,4vw,38px)] font-semibold leading-[1.1] tracking-[-0.02em] text-[color:var(--pt-ink,#EDEDEF)]">Sign in to your partner portal</h1>
+          <p className="m-0 mt-3 text-[17px] leading-[1.55] text-[color:var(--pt-ink2,#C9C9D0)]">
+            {inviteToken ? "Use the email address you were invited at to join the team." : "We email you a code. No password. If this is your first time, signing in is how you create your account."}
           </p>
-          <div className="mt-5">
-            <Btn onClick={emailLogin}>Sign in</Btn>
+          <div className="mt-7 w-full rounded-[18px] border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)] p-5 shadow-[0_24px_50px_-30px_rgba(40,25,15,0.25)]">
+            <Btn onClick={emailLogin} className="w-full">Continue with email</Btn>
+            <div className="mt-4 flex items-center justify-center gap-5 text-[14px]">
+              <a href="/partner-tutorial" className="font-semibold text-[#FF6A1F] hover:underline">Watch the tutorial</a>
+              <a href="/docs" className="text-[color:var(--pt-ink3,#9C9CA5)] hover:underline">Read the docs</a>
+            </div>
           </div>
         </div>
       ) : orgs === null ? (
-        <p className="text-[15px] text-[#C9C9D0]">Loading...</p>
+        <PortalLoading />
+      ) : creating ? (
+        <CreateOrg
+          onCancel={() => setCreating(false)}
+          onCreated={(id) => {
+            void loadOrgs().then(() => {
+              setOrgId(id);
+              setCounts(null);
+              setTab("overview");
+              setCreating(false);
+            });
+          }}
+        />
       ) : orgs.length === 0 ? (
-        <CreateOrg onCreated={() => void loadOrgs()} />
+        <CreateOrg onCreated={(id) => void loadOrgs().then(() => setOrgId(id))} />
       ) : (
         current && (
           <>

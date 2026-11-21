@@ -75,7 +75,7 @@ export function ActivityTab({ orgId }: { orgId: string }) {
 
       <div className="mt-8 flex flex-col gap-4 xl:flex-row">
         <div className="relative flex-1">
-          <svg className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#9C9CA5]" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <svg className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[color:var(--pt-ink3,#9C9CA5)]" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4.3-4.3" />
           </svg>
@@ -96,25 +96,25 @@ export function ActivityTab({ orgId }: { orgId: string }) {
 
       <div className="mt-6">
         {rows === null ? (
-          <p className="text-[15px] text-[#C9C9D0]">Loading...</p>
+          <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>
         ) : !shown.length ? (
-          <p className="text-[15px] text-[#C9C9D0]">No payouts match.</p>
+          <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No payouts match.</p>
         ) : (
           <Table cols={["Recipient", "Amount", "Batch", "Status", "Updated"]} template={TEMPLATE}>
             {shown.map((r) => (
               <Row key={r.payment_id} template={TEMPLATE}>
                 <div className="min-w-0">
-                  <div className="truncate font-medium text-[#EDEDEF]">{r.name ?? r.recipient ?? "Wallet recipient"}</div>
-                  {r.name && r.recipient && <div className="truncate font-mono text-[13.5px] text-[#9C9CA5]">{r.recipient}</div>}
+                  <div className="truncate font-medium text-[color:var(--pt-ink,#EDEDEF)]">{r.name ?? r.recipient ?? "Wallet recipient"}</div>
+                  {r.name && r.recipient && <div className="truncate font-mono text-[13.5px] text-[color:var(--pt-ink3,#9C9CA5)]">{r.recipient}</div>}
                 </div>
                 <span>{r.amount.toFixed(2)}</span>
-                <span className="truncate text-[#DCDCE1]">{r.batch ?? "-"}</span>
+                <span className="truncate text-[color:var(--pt-ink-soft,#DCDCE1)]">{r.batch ?? "-"}</span>
                 <span>
                   <Pill tone={STAGE[r.stage].tone} dot>
                     {STAGE[r.stage].label}
                   </Pill>
                 </span>
-                <span className="text-[#C9C9D0]">{updated(r.updated_at)}</span>
+                <span className="text-[color:var(--pt-ink2,#C9C9D0)]">{updated(r.updated_at)}</span>
               </Row>
             ))}
           </Table>

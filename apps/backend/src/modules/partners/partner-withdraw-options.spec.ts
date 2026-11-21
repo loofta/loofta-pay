@@ -64,6 +64,6 @@ describe('demo partner set up from the link', () => {
 
   it('shows a sample logo only for known ids', () => {
     expect(demoQuote({ logo: 'wave' }).partner.logo_url).toBe('https://loofta-rally.fly.dev/logos/wave.svg');
-    expect(demoQuote({ logo: 'https://evil.example/x.png' }).partner.logo_url).toBeNull();
+    expect(demoQuote({ logo: 'https://evil.example/x.png' }).partner.logo_url).toBe('https://pay.loofta.com/demo-store-logo.svg');
   });
 });

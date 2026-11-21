@@ -287,7 +287,7 @@ function Hero() {
               <ArrowRight className="h-5 w-5" strokeWidth={2} />
             </Link>
             <a
-              href="/partners"
+              href="https://pay.loofta.com/partner"
               className={`inline-flex items-center gap-2.5 rounded-full border-[1.5px] ${BORDER_LINE} px-8 py-5 font-display text-[22px] font-medium ${INK} transition-colors duration-200 hover:border-white/40`}
             >
               For business
@@ -624,7 +624,7 @@ function BusinessSection() {
                 <ArrowRight className="h-5 w-5" strokeWidth={2} />
               </a>
               <Link
-                href="/partners"
+                href="https://pay.loofta.com/partner"
                 className={`inline-flex items-center gap-2.5 rounded-full border-[1.5px] ${BORDER_LINE} bg-[#0B0B0F] px-8 py-5 font-display text-[22px] font-medium ${INK} transition-colors duration-200 hover:border-white/40`}
               >
                 Read more

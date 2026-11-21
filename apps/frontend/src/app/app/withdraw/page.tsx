@@ -73,10 +73,10 @@ const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits
 function MethodRow({ method, onClick }: { method: Method; onClick: () => void }) {
   const m = METHODS[method];
   return (
-    <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3.5 text-left hover:border-white/20">
+    <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-2xl border border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))] bg-[color:var(--pt-surface3,#1A1A20)] px-3.5 py-3.5 text-left hover:border-[color:var(--pt-w20,rgba(255,255,255,0.2))]">
       <span className="flex shrink-0">
         {m.icons.map((icon, i) => (
-          <span key={icon.src} className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border-2 border-[#1A1A20]" style={{ background: icon.bg, marginLeft: i ? -10 : 0 }}>
+          <span key={icon.src} className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border-2 border-[color:var(--pt-surface3,#1A1A20)]" style={{ background: icon.bg, marginLeft: i ? -10 : 0 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={icon.src} alt="" className="h-5 w-5 object-contain" />
           </span>
@@ -84,12 +84,12 @@ function MethodRow({ method, onClick }: { method: Method; onClick: () => void })
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
-          <span className="text-base font-bold text-white" style={{ fontFamily: SORA }}>{m.title}</span>
+          <span className="text-base font-bold text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>{m.title}</span>
           {m.badge && <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-sm font-semibold text-emerald-400">{m.badge}</span>}
         </span>
-        <span className="block text-sm text-[#8A8893]">{m.hint}</span>
+        <span className="block text-sm text-[color:var(--pt-ink3,#8A8893)]">{m.hint}</span>
       </span>
-      <span className="text-[#8A8893]">→</span>
+      <span className="text-[color:var(--pt-ink3,#8A8893)]">→</span>
     </button>
   );
 }
@@ -99,15 +99,15 @@ function History({ items }: { items: HistoryItem[] }) {
   if (!items.length) return null;
   return (
     <div className="mt-6">
-      <p className="text-sm font-semibold tracking-[0.14em] text-[#8A8893]">RECEIVED</p>
-      <ul className="mt-3 divide-y divide-white/10 rounded-2xl bg-[#0E0E12] px-4">
+      <p className="text-sm font-semibold tracking-[0.14em] text-[color:var(--pt-ink3,#8A8893)]">RECEIVED</p>
+      <ul className="mt-3 divide-y divide-[color:var(--pt-w10,rgba(255,255,255,0.1))] rounded-2xl bg-[color:var(--pt-surface2,#0E0E12)] px-4">
         {items.map((h) => (
           <li key={h.payment_id} className="flex items-center justify-between gap-3 py-3">
             <span className="min-w-0">
-              <span className="block truncate text-base text-white">{h.message || "Payout"}</span>
-              <span className="block text-sm text-[#8A8893]">Sent {dayFmt(h.withdrawn_at)}</span>
+              <span className="block truncate text-base text-[color:var(--pt-ink,#fff)]">{h.message || "Payout"}</span>
+              <span className="block text-sm text-[color:var(--pt-ink3,#8A8893)]">Sent {dayFmt(h.withdrawn_at)}</span>
             </span>
-            <span className="shrink-0 text-base font-semibold text-white">{usd(h.amount)}</span>
+            <span className="shrink-0 text-base font-semibold text-[color:var(--pt-ink,#fff)]">{usd(h.amount)}</span>
           </li>
         ))}
       </ul>
@@ -261,32 +261,32 @@ function WithdrawContent() {
 
   return (
     <div
-      className={`${sora.variable} ${manrope.variable} flex min-h-[calc(100vh-var(--header-h,0px))] flex-col items-center justify-center bg-[#0f0f12] px-4 py-10 text-[#F2EFE8]`}
+      className={`pt-light ${sora.variable} ${manrope.variable} flex min-h-[calc(100vh-var(--header-h,0px))] flex-col items-center justify-center bg-[color:var(--pt-page,#0f0f12)] px-4 py-10 text-[color:var(--pt-ink,#F2EFE8)]`}
       style={{ fontFamily: "var(--font-home-manrope), Manrope, sans-serif" }}
     >
       <div className="w-full max-w-[480px]">
-        <div className="rounded-[28px] border border-white/10 bg-[#141418] p-5 shadow-2xl">
+        <div className="rounded-[28px] border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface,#141418)] p-5 shadow-2xl">
           <div className="flex items-center gap-3">
             {brand?.logo_url && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={brand.logo_url} alt="" className="h-10 w-10 rounded-xl object-cover" referrerPolicy="no-referrer" />
             )}
-            <p className="truncate text-base font-bold text-white" style={{ fontFamily: SORA }}>{brand ? `${brand.name} payouts` : "Your payouts"}</p>
+            <p className="truncate text-base font-bold text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>{brand ? `${brand.name} payouts` : "Your payouts"}</p>
           </div>
 
           {isDemo && (
-            <p className="mt-4 rounded-xl border border-[#FF6A1F]/30 bg-[#FF6A1F]/10 px-4 py-3 text-sm leading-relaxed text-[#FFD2B8]">
+            <p className="mt-4 rounded-xl border border-[#FF6A1F]/30 bg-[#FF6A1F]/10 px-4 py-3 text-sm leading-relaxed text-[color:var(--pt-warn,#FFD2B8)]">
               Demo. This is the real withdrawal page with a sample prize. Sign in with any email. Nothing real is paid or charged.
             </p>
           )}
 
-          {!orgId && <p className="mt-5 text-base text-[#C8C6D0]">This page needs the link from the email {name} sent you.</p>}
-          {error && <p className="mt-5 rounded-xl border border-white/10 bg-white/[0.04] p-4 text-base text-[#C8C6D0]">{error}</p>}
-          {orgId && !error && !ready && <p className="mt-5 text-base text-[#8A8893]">Loading...</p>}
+          {!orgId && <p className="mt-5 text-base text-[color:var(--pt-ink2,#C8C6D0)]">This page needs the link from the email {name} sent you.</p>}
+          {error && <p className="mt-5 rounded-xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-w0p04,rgba(255,255,255,0.04))] p-4 text-base text-[color:var(--pt-ink2,#C8C6D0)]">{error}</p>}
+          {orgId && !error && !ready && <p className="mt-5 text-base text-[color:var(--pt-ink3,#8A8893)]">Loading...</p>}
 
           {orgId && !error && ready && !authenticated && (
             <>
-              <p className="mt-5 text-base leading-relaxed text-[#C8C6D0]">
+              <p className="mt-5 text-base leading-relaxed text-[color:var(--pt-ink2,#C8C6D0)]">
                 Sign in with the email address {name} sent your payout to. We email you a code, so only the person who was paid can withdraw.
               </p>
               <GradientActionButton className="mt-5" onClick={() => void login({ loginMethods: ["email"], disableSignup: false })}>
@@ -296,12 +296,12 @@ function WithdrawContent() {
           )}
 
           {authenticated && (
-            <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl bg-[#0E0E12] px-4 py-3">
+            <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl bg-[color:var(--pt-surface2,#0E0E12)] px-4 py-3">
               <div className="min-w-0">
-                <p className="text-sm text-[#8A8893]">Payouts for</p>
-                <p className="truncate text-base font-semibold text-white">{email ?? "your account"}</p>
+                <p className="text-sm text-[color:var(--pt-ink3,#8A8893)]">Payouts for</p>
+                <p className="truncate text-base font-semibold text-[color:var(--pt-ink,#fff)]">{email ?? "your account"}</p>
               </div>
-              <button type="button" onClick={() => void logout()} className="shrink-0 text-sm text-[#8A8893] transition-colors hover:text-white">
+              <button type="button" onClick={() => void logout()} className="shrink-0 text-sm text-[color:var(--pt-ink3,#8A8893)] transition-colors hover:text-[color:var(--pt-ink,#fff)]">
                 Not you? Sign out
               </button>
             </div>
@@ -325,7 +325,7 @@ function WithdrawContent() {
           )}
 
           {authenticated && !bankOpen && quote && !hasPayouts && quote.processing.length === 0 && (
-            <p className="mt-5 text-base leading-relaxed text-[#C8C6D0]">
+            <p className="mt-5 text-base leading-relaxed text-[color:var(--pt-ink2,#C8C6D0)]">
               There is nothing to withdraw for {email ?? "this account"} yet.{quote.history_enabled && (quote.history?.length ?? 0) > 0 ? " What you already received is listed below." : ""} If {name} paid a different email address, sign out and sign in with that one.
             </p>
           )}
@@ -335,14 +335,14 @@ function WithdrawContent() {
           {authenticated && !bankOpen && quote && (hasPayouts || quote.processing.length > 0) && (
             <>
               <div className="mt-6">
-                <p className="text-[40px] font-bold leading-none tracking-tight text-white" style={{ fontFamily: SORA }}>{usd(quote.gross_usdc)}</p>
-                <p className="mt-1.5 text-sm text-[#8A8893]">
+                <p className="text-[40px] font-bold leading-none tracking-tight text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>{usd(quote.gross_usdc)}</p>
+                <p className="mt-1.5 text-sm text-[color:var(--pt-ink3,#8A8893)]">
                   Available to withdraw{quote.processing.length > 0 ? ` · ${usd(quote.processing.reduce((a, p) => a + p.amount, 0))} still processing` : ""}
                 </p>
               </div>
 
               {belowMin && quote && (
-                <p className="mt-5 rounded-2xl bg-[#0E0E12] px-4 py-3 text-base text-[#C8C6D0]">
+                <p className="mt-5 rounded-2xl bg-[color:var(--pt-surface2,#0E0E12)] px-4 py-3 text-base text-[color:var(--pt-ink2,#C8C6D0)]">
                   The minimum withdrawal is {usd(quote.min_usd)}. You can withdraw once you have at least that much.
                 </p>
               )}
@@ -350,20 +350,20 @@ function WithdrawContent() {
               {hasPayouts && !belowMin && !method && (
                 <div className="mt-6 flex flex-col gap-3">
                   {groupsOn.length > 1 && (
-                    <div className="grid grid-cols-2 rounded-full bg-[#0E0E12] p-1">
+                    <div className="grid grid-cols-2 rounded-full bg-[color:var(--pt-surface2,#0E0E12)] p-1">
                       {groupsOn.map((g) => (
                         <button
                           key={g}
                           type="button"
                           onClick={() => setGroup(g)}
-                          className={`rounded-full py-2 text-sm font-semibold ${activeGroup === g ? "bg-[#2A2A32] text-white" : "text-[#8A8893] hover:text-white"}`}
+                          className={`rounded-full py-2 text-sm font-semibold ${activeGroup === g ? "bg-[color:var(--pt-active,#2A2A32)] text-[color:var(--pt-ink,#fff)]" : "text-[color:var(--pt-ink3,#8A8893)] hover:text-[color:var(--pt-ink,#fff)]"}`}
                         >
                           {g === "crypto" ? "Crypto" : "Cash"}
                         </button>
                       ))}
                     </div>
                   )}
-                  <p className="mt-1 text-sm font-semibold tracking-[0.14em] text-[#8A8893]">SEND FUNDS TO</p>
+                  <p className="mt-1 text-sm font-semibold tracking-[0.14em] text-[color:var(--pt-ink3,#8A8893)]">SEND FUNDS TO</p>
                   {GROUPS[activeGroup].filter(on).map((m) => (
                     <MethodRow key={m} method={m} onClick={() => setMethod(m)} />
                   ))}
@@ -372,13 +372,13 @@ function WithdrawContent() {
 
               {hasPayouts && !belowMin && method && (
                 <div className="mt-6">
-                  <button type="button" onClick={back} className="mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-[#C8C6D0] hover:text-white">
+                  <button type="button" onClick={back} className="mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-[color:var(--pt-ink2,#C8C6D0)] hover:text-[color:var(--pt-ink,#fff)]">
                     <ArrowLeft className="h-4 w-4" aria-hidden /> {METHODS[method].title}
                   </button>
 
                   {method === "usdc" ? (
                     <div className="flex flex-col gap-2">
-                      <label htmlFor="partner-withdraw-wallet" className="text-sm font-semibold text-[#8A8893]">Solana wallet address</label>
+                      <label htmlFor="partner-withdraw-wallet" className="text-sm font-semibold text-[color:var(--pt-ink3,#8A8893)]">Solana wallet address</label>
                       <input
                         id="partner-withdraw-wallet"
                         value={wallet}
@@ -386,15 +386,15 @@ function WithdrawContent() {
                         placeholder="Paste any Solana wallet address"
                         autoComplete="off"
                         spellCheck={false}
-                        className="w-full rounded-2xl border border-white/10 bg-[#0E0E12] px-4 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
+                        className="w-full rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#0E0E12)] px-4 py-3 text-base text-[color:var(--pt-ink,#fff)] outline-none focus:border-[#FF7A2A]/60"
                       />
-                      {wallet.trim() !== "" && !SOLANA_ADDRESS.test(wallet.trim()) && <p className="text-sm text-[#FF8A5C]">That does not look like a Solana address.</p>}
-                      <p className="text-sm text-[#8A8893]">Only send to a wallet that supports USDC on Solana. Check the address, it cannot be undone.</p>
+                      {wallet.trim() !== "" && !SOLANA_ADDRESS.test(wallet.trim()) && <p className="text-sm text-[color:var(--pt-warn,#FF8A5C)]">That does not look like a Solana address.</p>}
+                      <p className="text-sm text-[color:var(--pt-ink3,#8A8893)]">Only send to a wallet that supports USDC on Solana. Check the address, it cannot be undone.</p>
                     </div>
                   ) : method === "token" ? (
                     <div className="flex flex-col gap-3">
                       <div>
-                        <span className="text-sm text-[#8A8893]">You receive</span>
+                        <span className="text-sm text-[color:var(--pt-ink3,#8A8893)]">You receive</span>
                         <div className="mt-1">
                           <TokenCombobox
                             tokens={tokenChoices}
@@ -418,10 +418,10 @@ function WithdrawContent() {
                             aria-label={`${token.symbol} address`}
                             autoComplete="off"
                             spellCheck={false}
-                            className="w-full rounded-2xl border border-white/10 bg-[#0E0E12] px-4 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
+                            className="w-full rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#0E0E12)] px-4 py-3 text-base text-[color:var(--pt-ink,#fff)] outline-none focus:border-[#FF7A2A]/60"
                           />
                           {tokenAddr.trim() !== "" && !isValidAddressForChain(tokenAddr.trim(), token.chain) && (
-                            <p className="text-sm text-[#FF8A5C]">That does not look like a {formatChainLabel(token.chain)} address.</p>
+                            <p className="text-sm text-[color:var(--pt-warn,#FF8A5C)]">That does not look like a {formatChainLabel(token.chain)} address.</p>
                           )}
                           
                         </>
@@ -429,18 +429,18 @@ function WithdrawContent() {
                     </div>
                   ) : method === "p2p" ? (
                     <div className="flex flex-col gap-3">
-                      <p className="text-sm font-semibold tracking-[0.14em] text-[#8A8893]">PICK AN APP</p>
+                      <p className="text-sm font-semibold tracking-[0.14em] text-[color:var(--pt-ink3,#8A8893)]">PICK AN APP</p>
                       <div className="grid grid-cols-2 gap-2.5">
                         {PEER_PLATFORMS.map((p) => (
                           <button
                             key={p.id}
                             type="button"
                             onClick={() => setPlatformId(p.id)}
-                            className={`flex items-center gap-2.5 rounded-2xl border px-3 py-3 text-left transition-colors ${platformId === p.id ? "border-[#FF7A2A]/60 bg-[#FF7A2A]/[0.06]" : "border-white/[0.07] bg-[#1A1A20] hover:border-white/20"}`}
+                            className={`flex items-center gap-2.5 rounded-2xl border px-3 py-3 text-left transition-colors ${platformId === p.id ? "border-[#FF7A2A]/60 bg-[#FF7A2A]/[0.06]" : "border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))] bg-[color:var(--pt-surface3,#1A1A20)] hover:border-[color:var(--pt-w20,rgba(255,255,255,0.2))]"}`}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={p.logo} alt="" className="h-8 w-8 shrink-0 rounded-lg bg-[#1C1C22] object-contain p-1" />
-                            <span className="truncate text-base font-semibold text-white">{p.name}</span>
+                            <img src={p.logo} alt="" className="h-8 w-8 shrink-0 rounded-lg bg-[color:var(--pt-surface3,#1C1C22)] object-contain p-1" />
+                            <span className="truncate text-base font-semibold text-[color:var(--pt-ink,#fff)]">{p.name}</span>
                           </button>
                         ))}
                       </div>
@@ -453,26 +453,26 @@ function WithdrawContent() {
                             aria-label={platform.idLabel}
                             autoComplete="off"
                             spellCheck={false}
-                            className="w-full rounded-2xl border border-white/10 bg-[#0E0E12] px-4 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
+                            className="w-full rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#0E0E12)] px-4 py-3 text-base text-[color:var(--pt-ink,#fff)] outline-none focus:border-[#FF7A2A]/60"
                           />
-                          <p className="text-sm text-[#8A8893]">{platform.idLabel}</p>
-                          {platform.maxUSDC && quote.net_usdc > platform.maxUSDC && <p className="text-sm text-[#FF8A5C]">{platform.name} allows up to {usd(platform.maxUSDC)} per cash-out.</p>}
+                          <p className="text-sm text-[color:var(--pt-ink3,#8A8893)]">{platform.idLabel}</p>
+                          {platform.maxUSDC && quote.net_usdc > platform.maxUSDC && <p className="text-sm text-[color:var(--pt-warn,#FF8A5C)]">{platform.name} allows up to {usd(platform.maxUSDC)} per cash-out.</p>}
                         </>
                       )}
                     </div>
                   ) : (
-                    <p className="text-base leading-relaxed text-[#C8C6D0]">Cash out to your bank account or card. You pick the option and see the exact amount you get on the next step. Fees are only taken when you confirm the cash-out.</p>
+                    <p className="text-base leading-relaxed text-[color:var(--pt-ink2,#C8C6D0)]">Cash out to your bank account or card. You pick the option and see the exact amount you get on the next step. Fees are only taken when you confirm the cash-out.</p>
                   )}
 
                   {(
-                    <div className="mt-5 divide-y divide-white/10 rounded-2xl bg-[#0E0E12] px-4">
+                    <div className="mt-5 divide-y divide-[color:var(--pt-w10,rgba(255,255,255,0.1))] rounded-2xl bg-[color:var(--pt-surface2,#0E0E12)] px-4">
                       <div className="flex items-center justify-between py-3">
-                        <span className="text-base text-[#8A8893]">Fees</span>
-                        <span className="text-base text-[#C8C6D0]">{usd(fees)}</span>
+                        <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">Fees</span>
+                        <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(fees)}</span>
                       </div>
                       <div className="flex items-center justify-between py-3">
-                        <span className="text-base font-semibold text-white">You receive</span>
-                        <span className="text-base font-semibold text-white">{usd(quote.net_usdc)}</span>
+                        <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">You receive</span>
+                        <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">{usd(quote.net_usdc)}</span>
                       </div>
                     </div>
                   )}
@@ -480,20 +480,20 @@ function WithdrawContent() {
                   <GradientActionButton className="mt-5" onClick={() => void confirm()} disabled={busy || !quote.can_withdraw || !walletOk} loading={busy} loadingText={stage ?? "Sending..."}>
                     {method === "usdc" ? `Withdraw ${usd(quote.net_usdc)}` : method === "p2p" ? `Cash out ${usd(quote.net_usdc)}` : method === "token" ? `Swap ${usd(quote.net_usdc)}` : "Continue to bank or card"}
                   </GradientActionButton>
-                  {quote.reason && <p className="mt-3 text-base text-[#C8C6D0]">{quote.reason}</p>}
+                  {quote.reason && <p className="mt-3 text-base text-[color:var(--pt-ink2,#C8C6D0)]">{quote.reason}</p>}
                 </div>
               )}
 
-              {notice && <p className="mt-4 text-base text-[#F2EFE8]">{notice}</p>}
+              {notice && <p className="mt-4 text-base text-[color:var(--pt-ink,#F2EFE8)]">{notice}</p>}
               {!method && quote.history_enabled && <History items={quote.history ?? []} />}
             </>
           )}
         </div>
 
-        <div className="mt-8 flex items-center justify-center gap-2 text-sm text-[#6E6C78]">
+        <div className="mt-8 flex items-center justify-center gap-2 text-sm text-[color:var(--pt-ink4,#6E6C78)]">
           <span>Powered by</span>
           <a href="https://loofta.com/" className="inline-flex items-center transition-opacity hover:opacity-90" aria-label="Loofta">
-            <Image src="/loofta-white.svg" alt="Loofta" width={72} height={18} className="h-[18px] w-auto opacity-80" />
+            <Image src="/loofta.svg" alt="Loofta" width={72} height={18} className="h-[18px] w-auto opacity-80" />
           </a>
         </div>
       </div>
@@ -503,7 +503,7 @@ function WithdrawContent() {
 
 export default function WithdrawPage() {
   return (
-    <Suspense fallback={<div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12]" />}>
+    <Suspense fallback={<div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[color:var(--pt-page,#0f0f12)]" />}>
       <WithdrawContent />
     </Suspense>
   );

@@ -247,3 +247,46 @@ html { overflow-x: clip; }
   width: 0.5rem; height: 0.5rem; border-radius: 9999px;
   background: linear-gradient(135deg, #FF0F00, #EAB308);
 }
+
+/* The partner portal and the partner withdraw page are light. Shared components keep their dark colours everywhere else:
+   they read these variables with the dark value as the fallback, so only a page that wraps itself in .pt-light turns light. */
+.pt-light {
+  color-scheme: light;
+  --pt-w60: rgba(0,0,0,0.6);
+  --pt-panel: rgba(255, 255, 255, 0.72);
+  --pt-active: #E2E2E8;
+  --pt-ink: #1D1D1F;
+  --pt-ink-soft: #2E2E33;
+  --pt-ink2: #4F4F57;
+  --pt-ink2b: #5E5E67;
+  --pt-ink3: #6E6E73;
+  --pt-ink4: #86868B;
+  --pt-ok: #1F9D55;
+  --pt-page: #FAFAFB;
+  --pt-surface: #FFFFFF;
+  --pt-surface2: #F5F5F7;
+  --pt-surface3: #F0F0F3;
+  --pt-warn: #D8481A;
+  --pt-w0p02: rgba(0,0,0,0.02);
+  --pt-w0p03: rgba(0,0,0,0.03);
+  --pt-w0p04: rgba(0,0,0,0.04);
+  --pt-w0p05: rgba(0,0,0,0.05);
+  --pt-w0p06: rgba(0,0,0,0.06);
+  --pt-w0p07: rgba(0,0,0,0.07);
+  --pt-w0p08: rgba(0,0,0,0.08);
+  --pt-w0p09: rgba(0,0,0,0.09);
+  --pt-w0p12: rgba(0,0,0,0.12);
+  --pt-w0p14: rgba(0,0,0,0.14);
+  --pt-w10: rgba(0,0,0,0.1);
+  --pt-w15: rgba(0,0,0,0.15);
+  --pt-w20: rgba(0,0,0,0.2);
+  --pt-w25: rgba(0,0,0,0.25);
+  --pt-w30: rgba(0,0,0,0.3);
+  --pt-w35: rgba(0,0,0,0.35);
+  --pt-w40: rgba(0,0,0,0.4);
+  --pt-w45: rgba(0,0,0,0.45);
+  --pt-w5: rgba(0,0,0,0.05);
+  --pt-w55: rgba(0,0,0,0.55);
+  --pt-w8: rgba(0,0,0,0.08);
+  --pt-w90: rgba(0,0,0,0.9);
+}

@@ -85,8 +85,8 @@ export function TeamTab({ orgId, myRole, myUserId }: { orgId: string; myRole: Pa
       )}
 
       <div className={canManage ? "mt-8" : ""}>
-        <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#101012]">
-          <div className="divide-y divide-white/10">
+        <div className="overflow-hidden rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#101012)]">
+          <div className="divide-y divide-[color:var(--pt-w10,rgba(255,255,255,0.1))]">
             {members.map((m) => {
               const name = m.email ?? (m.user_id === myUserId ? "You" : "Member");
               return (
@@ -94,8 +94,8 @@ export function TeamTab({ orgId, myRole, myUserId }: { orgId: string; myRole: Pa
                   <div className="flex items-center gap-4">
                     <Avatar name={name} size={40} />
                     <div>
-                      <div className="text-[15px] font-medium text-[#EDEDEF]">{name}</div>
-                      {m.status === "invited" && <div className="text-[14px] text-[#9C9CA5]">Invite pending</div>}
+                      <div className="text-[15px] font-medium text-[color:var(--pt-ink,#EDEDEF)]">{name}</div>
+                      {m.status === "invited" && <div className="text-[14px] text-[color:var(--pt-ink3,#9C9CA5)]">Invite pending</div>}
                     </div>
                   </div>
                   <div className="flex items-center gap-3">

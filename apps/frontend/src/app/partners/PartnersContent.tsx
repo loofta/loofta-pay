@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Check, Gift, Landmark, Moon, Share2, Sparkles, Sun, Trophy, Users, Video, Wallet } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Coins, Gift, Landmark, LifeBuoy, MessageCircle, Moon, MousePointerClick, Send, Share2, ShieldCheck, Sparkles, Sun, Timer, Trophy, Users, Video, Wallet } from "lucide-react";
 import { MinimalHeader } from "@/components/layout/MinimalHeader";
 import { Footer } from "@/components/layout/Footer";
 import { PARTNERS_FAQ as FAQ } from "./data";
@@ -278,18 +278,18 @@ function ClaimCard() {
     id = window.setTimeout(tick, steps[0]);
     return () => window.clearTimeout(id);
   }, []);
-  const tile = "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-[#0f0f12] bg-[#1C1C22]";
+  const tile = "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-white bg-[#F2F2F4]";
   return (
-    <div className="pl-float relative w-full max-w-[430px] overflow-hidden rounded-[30px] border border-white/10 bg-[#0f0f12] p-6 text-slate-100 shadow-[0_50px_90px_-30px_rgba(255,70,20,0.45),0_30px_60px_-30px_rgba(0,0,0,0.6)]">
+    <div className="pl-float relative w-full max-w-[430px] overflow-hidden rounded-[30px] border border-black/[0.06] bg-white p-6 text-[#1D1D1F] shadow-[0_50px_90px_-30px_rgba(255,90,30,0.35),0_30px_60px_-30px_rgba(40,25,15,0.25)]">
       <div className="pl-sheen" aria-hidden />
       <div className="flex items-center gap-3.5">
         <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#FF1301] to-[#EAB308] text-lg font-bold text-white">R</span>
         <div className="min-w-0">
-          <p className="text-[15px] text-slate-400">Rally sent you</p>
-          <p className="text-[36px] font-semibold leading-none tracking-[-0.03em] text-white">$400.00</p>
+          <p className="text-[15px] text-[#86868B]">Rally sent you</p>
+          <p className="text-[36px] font-semibold leading-none tracking-[-0.03em] text-[#1D1D1F]">$400.00</p>
         </div>
       </div>
-      <p className="mt-3 text-[15px] text-slate-400">&ldquo;Summer Quest, 1st place&rdquo;</p>
+      <p className="mt-3 text-[15px] text-[#86868B]">&ldquo;Summer Quest, 1st place&rdquo;</p>
 
       <div className="relative mt-5 min-h-[300px]">
         {/* 0 and 1: the two ways to claim */}
@@ -299,15 +299,15 @@ function ClaimCard() {
             Claim in crypto
           </div>
           <div className="my-3.5 flex items-center gap-3">
-            <div className="h-px flex-1 bg-white/10" />
-            <span className="text-base font-medium uppercase tracking-widest text-slate-500">or</span>
-            <div className="h-px flex-1 bg-white/10" />
+            <div className="h-px flex-1 bg-black/[0.08]" />
+            <span className="text-base font-medium uppercase tracking-widest text-[#9A9AA2]">or</span>
+            <div className="h-px flex-1 bg-black/[0.08]" />
           </div>
           <div className={`rounded-2xl bg-gradient-to-r from-orange-500 via-amber-400 to-red-500 p-[1.5px] transition-transform duration-300 ${phase === 1 ? "scale-[0.97]" : ""}`}>
-            <div className="flex flex-col gap-3 rounded-[calc(1rem-1.5px)] bg-[#0f0f12] px-4 py-3.5 font-semibold">
+            <div className="flex flex-col gap-3 rounded-[calc(1rem-1.5px)] bg-white px-4 py-3.5 font-semibold">
               <span className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2"><Landmark className="h-4 w-4" />Claim to cash</span>
-                <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-sm font-medium text-amber-300">Easiest</span>
+                <span className="rounded-full bg-[#FFF3D6] px-2.5 py-0.5 text-sm font-medium text-[#B7791F]">Easiest</span>
               </span>
               <span className="flex items-center -space-x-2.5">
                 {CASH_APPS.map((a) => (
@@ -316,23 +316,23 @@ function ClaimCard() {
                     <img src={a.logo} alt={a.name} className="h-6 w-6 object-contain" />
                   </span>
                 ))}
-                <span className={tile}><Landmark className="h-5 w-5 text-slate-200" /></span>
-                <span className={`${tile} text-lg font-semibold text-slate-200`}>+</span>
+                <span className={tile}><Landmark className="h-5 w-5 text-[#3A3A3F]" /></span>
+                <span className={`${tile} text-lg font-semibold text-[#3A3A3F]`}>+</span>
               </span>
             </div>
           </div>
-          <p className="mt-4 text-center text-[14px] text-slate-500">No wallet and no seed phrase needed</p>
+          <p className="mt-4 text-center text-[14px] text-[#9A9AA2]">No wallet and no seed phrase needed</p>
         </div>
 
         {/* 2: pick an app */}
         <div className={`absolute inset-0 transition-all duration-500 ${phase === 2 ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-3 opacity-0"}`}>
-          <p className="mb-3 text-sm font-semibold tracking-[0.14em] text-slate-400">SEND FUNDS TO</p>
+          <p className="mb-3 text-sm font-semibold tracking-[0.14em] text-[#86868B]">SEND FUNDS TO</p>
           <div className="flex flex-col gap-2.5">
             {CASH_APPS.slice(0, 4).map((a, i) => (
-              <div key={a.name} className={`flex items-center gap-3 rounded-2xl border px-3.5 py-3 transition-colors duration-500 ${i === 1 && phase === 2 ? "border-[#FF7A2A]/60 bg-[#FF7A2A]/[0.07]" : "border-white/[0.07] bg-[#1A1A20]"}`} style={{ transitionDelay: i === 1 ? "700ms" : "0ms" }}>
+              <div key={a.name} className={`flex items-center gap-3 rounded-2xl border px-3.5 py-3 transition-colors duration-500 ${i === 1 && phase === 2 ? "border-[#FF7A2A]/60 bg-[#FFF1EA]" : "border-black/[0.07] bg-[#F7F7F9]"}`} style={{ transitionDelay: i === 1 ? "700ms" : "0ms" }}>
                 <span className={tile}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src={a.logo} alt="" className="h-6 w-6 object-contain" /></span>
-                <span className="flex-1 text-base font-bold text-white">{a.name}</span>
-                <span className="text-slate-500">→</span>
+                <span className="flex-1 text-base font-bold text-[#1D1D1F]">{a.name}</span>
+                <span className="text-[#9A9AA2]">→</span>
               </div>
             ))}
           </div>
@@ -340,9 +340,9 @@ function ClaimCard() {
 
         {/* 3: done */}
         <div className={`absolute inset-0 flex flex-col items-center justify-center text-center transition-all duration-500 ${phase === 3 ? "scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0"}`}>
-          <svg width="72" height="72" viewBox="0 0 76 76" fill="none"><circle cx="38" cy="38" r="34" stroke="#5fd49c" strokeWidth="3" /><path d="M24 39l10 10 19-21" stroke="#5fd49c" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="60" strokeDashoffset={phase === 3 ? 0 : 60} style={{ transition: "stroke-dashoffset 0.7s ease 0.25s" }} /></svg>
-          <p className="mt-4 text-2xl font-semibold text-white">On its way to Venmo</p>
-          <p className="mt-1 text-slate-400">$395.75 · no Loofta fee</p>
+          <svg width="72" height="72" viewBox="0 0 76 76" fill="none"><circle cx="38" cy="38" r="34" stroke="#1F9D55" strokeWidth="3" /><path d="M24 39l10 10 19-21" stroke="#1F9D55" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="60" strokeDashoffset={phase === 3 ? 0 : 60} style={{ transition: "stroke-dashoffset 0.7s ease 0.25s" }} /></svg>
+          <p className="mt-4 text-2xl font-semibold text-[#1D1D1F]">On its way to Venmo</p>
+          <p className="mt-1 text-[#86868B]">$395.75 · no Loofta fee</p>
         </div>
       </div>
     </div>
@@ -438,6 +438,44 @@ const USE_CASE_ICONS = [
   { Icon: Users, bg: "bg-[#DDF5EA] text-[#15803D]" },
 ];
 
+/** Closed rows that open on tap. One row open at a time. */
+function Accordion({ items, theme }: { items: Array<{ q: string; a: string }>; theme: Theme }) {
+  const t = THEMES[theme];
+  const [open, setOpen] = useState<number | null>(0);
+  return (
+    <div className={`overflow-hidden rounded-[22px] border ${t.card}`}>
+      {items.map((it, i) => {
+        const on = open === i;
+        return (
+          <div key={it.q} className={i > 0 ? `border-t ${t.line}` : ""}>
+            <button
+              type="button"
+              aria-expanded={on}
+              onClick={() => setOpen(on ? null : i)}
+              className={`flex w-full items-center justify-between gap-4 px-6 py-5 text-left text-lg font-medium transition-colors hover:bg-black/[0.02] ${t.ink}`}
+            >
+              {it.q}
+              <ChevronDown className={`h-5 w-5 shrink-0 text-[#86868B] transition-transform duration-300 ${on ? "rotate-180" : ""}`} />
+            </button>
+            <div className={`grid transition-all duration-300 ease-out ${on ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+              <div className="overflow-hidden">
+                <p className={`px-6 pb-5 text-lg leading-[1.65] ${t.ink2}`}>{it.a}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const STEP_ICONS = [
+  { Icon: Send, bg: "bg-[#FFEDE5] text-[#E8461A]" },
+  { Icon: MousePointerClick, bg: "bg-[#E6EEFF] text-[#2F63E0]" },
+  { Icon: Coins, bg: "bg-[#DDF5EA] text-[#15803D]" },
+];
+const SUPPORT_ICONS = [LifeBuoy, Timer, MessageCircle];
+
 /* =====================================================
    PAGE
    ===================================================== */
@@ -520,16 +558,15 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
                   {isPortal ? "Partner Portal" : "Loofta for Business"}
                 </span>
                 <h1 className={`mt-[18px] ${isPortal ? "text-[clamp(40px,4.9vw,74px)] font-bold leading-[0.98] tracking-[-0.045em]" : "text-[clamp(38px,5.4vw,62px)] font-semibold leading-[1.05] tracking-[-0.025em]"} ${t.ink}`}>
-                  Pay your clippers, affiliates and creators.{" "}
+                  {isPortal ? "Pay anyone." : "Pay your clippers, affiliates and creators."}{isPortal ? <br /> : " "}
                   <span className={isPortal ? "text-[#A1A1A6]" : "bg-gradient-to-r from-[#FF1301] to-[#EAB308] bg-clip-text text-transparent"}>
-                    Earn on every payout.
+                    {isPortal ? "Earn on every payout." : "Earn on every payout."}
                   </span>
                 </h1>
                 <p className={`mt-[22px] max-w-2xl text-[clamp(18px,2vw,22px)] leading-[1.6] ${t.ink2}`}>
-                  Send money to a social handle or email, in USDC or any token. Your people choose how to
-                  get paid: Venmo, Cash App, Revolut, Zelle, a bank account or crypto. You never collect a
-                  wallet address or bank details, we handle the support, and a share of their cash-out
-                  fees comes back to you.
+                  {isPortal
+                    ? "Send money to an email or handle. They cash out how they like, and a share of the fee comes back to you."
+                    : "Send money to a social handle or email, in USDC or any token. Your people choose how to get paid: Venmo, Cash App, Revolut, Zelle, a bank account or crypto. You never collect a wallet address or bank details, we handle the support, and a share of their cash-out fees comes back to you."}
                 </p>
                 <div className="mt-9">
                   <ContactButtons theme={theme} portal={portal} />
@@ -575,6 +612,23 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
           {/* How it works */}
           <section data-reveal className="mb-20">
             <SectionTitle theme={theme} eyebrow="How it works" title="Three steps, no wallet addresses" />
+            {isPortal ? (
+              <div className="grid gap-4 md:grid-cols-3">
+                {STEPS.map((step, i) => {
+                  const { Icon, bg } = STEP_ICONS[i];
+                  return (
+                    <div key={step.title} className={`pl-lift rounded-[22px] border p-7 ${t.card}`}>
+                      <div className="flex items-center justify-between">
+                        <span className={`flex h-12 w-12 items-center justify-center rounded-2xl ${bg}`}><Icon className="h-6 w-6" /></span>
+                        <span className="text-sm font-semibold text-[#86868B]">0{i + 1}</span>
+                      </div>
+                      <h3 className={`mt-5 text-xl font-semibold ${t.ink}`}>{step.title}</h3>
+                      <p className={`mt-1.5 text-[17px] leading-[1.6] ${t.ink2}`}>{step.body}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
             <div className="flex flex-col gap-7">
               {STEPS.map((step, i) => (
                 <div key={step.title} className="flex items-start gap-4">
@@ -590,6 +644,7 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
                 </div>
               ))}
             </div>
+            )}
           </section>
 
           {/* We pay you */}
@@ -659,6 +714,20 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
               title="We handle the support for your payouts"
               lead="Your recipients are our customers on the claim page. When something goes wrong, they contact us, not your team."
             />
+            {isPortal ? (
+              <div className="grid gap-4 md:grid-cols-3">
+                {SUPPORT_POINTS.map((pt, i) => {
+                  const Icon = SUPPORT_ICONS[i % SUPPORT_ICONS.length];
+                  return (
+                    <div key={pt} className={`pl-lift rounded-[22px] border p-6 ${t.card}`}>
+                      <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-[#DDF5EA] text-[#15803D]"><Icon className="h-5 w-5" /></span>
+                      <p className={`text-[17px] leading-[1.55] ${t.ink}`}>{pt}</p>
+                      <p className="mt-3 flex items-center gap-1.5 text-sm font-semibold text-[#15803D]"><ShieldCheck className="h-4 w-4" /> We handle it</p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
             <div className={`rounded-[22px] border p-7 ${t.cardSoft}`}>
               <ul className="flex flex-col gap-3">
                 {SUPPORT_POINTS.map((p) => (
@@ -669,6 +738,7 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
                 ))}
               </ul>
             </div>
+            )}
           </section>
 
           {/* Switching */}
@@ -679,6 +749,9 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
               title="Using Whop or another payout tool? Ask these four questions."
               lead="Here is what you get with Loofta. Put the same questions to your current provider."
             />
+            {isPortal ? (
+              <Accordion theme={theme} items={QUESTIONS.map((x) => ({ q: x.q, a: x.a }))} />
+            ) : (
             <div className={`overflow-hidden rounded-[22px] border ${t.card}`}>
               {QUESTIONS.map((row, i) => (
                 <div
@@ -693,6 +766,7 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
                 </div>
               ))}
             </div>
+            )}
           </section>
 
           {/* Pricing */}
@@ -743,6 +817,9 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
           {/* FAQ */}
           <section data-reveal className="mb-20">
             <SectionTitle theme={theme} title="Frequently asked questions" />
+            {isPortal ? (
+              <Accordion theme={theme} items={FAQ.map((x) => ({ q: x.question, a: x.answer }))} />
+            ) : (
             <div className="flex flex-col gap-7">
               {FAQ.map((item) => (
                 <div key={item.question}>
@@ -751,6 +828,7 @@ export default function PartnersContent({ portal }: { portal?: PortalActions } =
                 </div>
               ))}
             </div>
+            )}
           </section>
 
           {/* Contact CTA */}

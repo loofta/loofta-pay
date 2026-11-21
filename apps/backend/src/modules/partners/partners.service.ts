@@ -74,6 +74,9 @@ export { MAX_PARTNER_FEE_SHARE, computePartnerFeeUsdc };
 
 const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');
 
+/** How many companies one person can own. */
+export const MAX_COMPANIES_PER_OWNER = 5;
+
 @Injectable()
 export class PartnersService {
   private readonly logger = new Logger(PartnersService.name);
@@ -189,8 +192,9 @@ export class PartnersService {
 
   async create(ownerUserId: string, dto: CreatePartnerDto): Promise<Partner> {
     if (dto.logo_url) assertSafePublicUrl(dto.logo_url, 'logo_url');
-    const { data: existing } = await this.supabase.partners.select('id').eq('owner_user_id', ownerUserId).maybeSingle();
-    if (existing) throw new ConflictException('You already have a partner account.');
+    // One person can run several companies, up to a limit. (The database needs migration 20261121100000 for the second one.)
+    const { count: owned } = await this.supabase.partners.select('id', { count: 'exact', head: true }).eq('owner_user_id', ownerUserId);
+    if ((owned ?? 0) >= MAX_COMPANIES_PER_OWNER) throw new ConflictException(`You can run up to ${MAX_COMPANIES_PER_OWNER} companies.`);
     const { data, error } = await this.supabase.partners
       .insert({ org_id: `org_${randomBytes(6).toString('hex')}`, owner_user_id: ownerUserId, name: dto.name.trim(), logo_url: dto.logo_url ?? null })
       .select('*')

@@ -53,7 +53,7 @@ export function SettingsTab({ orgId }: { orgId: string }) {
     return (
       <>
         <PageHeader crumb="Partner portal / Settings" title="Your page and fees" />
-        {error ? <Notice kind="error">{error}</Notice> : <p className="text-[15px] text-[#C9C9D0]">Loading...</p>}
+        {error ? <Notice kind="error">{error}</Notice> : <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>}
       </>
     );
   }
@@ -106,7 +106,7 @@ export function SettingsTab({ orgId }: { orgId: string }) {
           </Field>
           <Field label="Brand colour" hint="Hex, for example #7c3aed">
             <div className="relative">
-              <span className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 rounded-md border border-white/15" style={{ background: color ?? "transparent" }} />
+              <span className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 rounded-md border border-[color:var(--pt-w15,rgba(255,255,255,0.15))]" style={{ background: color ?? "transparent" }} />
               <input className={`${inputCls} pl-12`} disabled={!canEdit} value={s.brand_color ?? ""} placeholder="#7c3aed" onChange={(e) => set("brand_color", e.target.value)} />
             </div>
           </Field>
@@ -192,7 +192,7 @@ export function SettingsTab({ orgId }: { orgId: string }) {
 
       <SplitSection title="Withdraw page" desc="What your recipients can do on your withdraw page. Everything is on unless you switch it off.">
         <div className="space-y-3">
-          <label className="flex items-start gap-3 rounded-xl border border-white/[0.07] bg-[#121214] p-3.5">
+          <label className="flex items-start gap-3 rounded-xl border border-white/[0.07] bg-[color:var(--pt-surface,#121214)] p-3.5">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -212,7 +212,7 @@ export function SettingsTab({ orgId }: { orgId: string }) {
             // The last route left on cannot be switched off, or recipients would have no way to cash out.
             const last = enabled && METHOD_OPTIONS.length - off.length <= 1;
             return (
-              <label key={m.id} className="flex items-start gap-3 rounded-xl border border-white/[0.07] bg-[#121214] p-3.5">
+              <label key={m.id} className="flex items-start gap-3 rounded-xl border border-white/[0.07] bg-[color:var(--pt-surface,#121214)] p-3.5">
                 <input
                   type="checkbox"
                   className="mt-1 h-4 w-4"

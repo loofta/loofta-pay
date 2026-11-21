@@ -13,7 +13,7 @@ const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-tt-mono", di
 const sora = Sora({ subsets: ["latin"], variable: "--font-tt-sora", display: "swap" });
 
 const PORTAL_HREF = "https://pay.loofta.com/partner/portal";
-const STORE_HREF = "https://loofta-rally.fly.dev";
+const WITHDRAW_DEMO_HREF = "https://pay.loofta.com/withdraw?orgId=demo";
 
 /* ---------- motion helpers ---------- */
 
@@ -222,38 +222,6 @@ function Intro() {
   );
 }
 
-function Store({ c }: { c: Ctx }) {
-  const p = usePhase([500, 1100, 1700, 2300]);
-  return (
-    <div className="t-stage">
-      <Browser url="rally.com">
-        <div className="t-pad" style={{ paddingTop: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 650, fontSize: 18 }}>
-            <Mark id={c.s.logo} size={30} />{c.s.brand}
-            <span className="mut" style={{ marginLeft: "auto", fontWeight: 500, fontSize: 14.5 }}>Discover &nbsp; Top creators</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "end", margin: "24px 0 8px", flexWrap: "wrap" }}>
-            <div style={{ fontSize: 30, fontWeight: 650, letterSpacing: "-0.035em", lineHeight: 1.08 }}>Get paid for the<br /><span style={{ color: c.accent }}>content</span> you make</div>
-            <On show={p >= 1}><div style={{ border: "1px solid rgba(0,0,0,.08)", borderRadius: 14, padding: "10px 18px" }}><div className="mut" style={{ fontSize: 13.5 }}>Creator fund</div><div style={{ fontSize: 28, fontWeight: 650, letterSpacing: "-0.03em" }}>$1,000</div></div></On>
-          </div>
-          <div style={{ marginTop: 14 }}>
-            {PAYOUTS.slice(0, 4).map((r, i) => (
-              <On key={r.h} show={p >= 2} delay={i * 130}>
-                <div className="r">
-                  <span className="mut" style={{ width: 16, fontWeight: 500 }}>{i + 1}</span>
-                  <span className="av" style={{ background: r.c }}>{r.h}</span>
-                  <span className="grow">{r.who}</span>
-                  <span className="mut" style={{ fontVariantNumeric: "tabular-nums" }}>{(512 - i * 38).toLocaleString()}k views</span>
-                </div>
-              </On>
-            ))}
-          </div>
-        </div>
-      </Browser>
-    </div>
-  );
-}
-
 function Setup({ c }: { c: Ctx }) {
   const p = usePhase([1900, 2700, 3500]);
   const name = useTyped(c.s.brand, 500, 110);
@@ -335,7 +303,7 @@ function Api({ c }: { c: Ctx }) {
     <><span className="k">import</span> {"{ LooftaPayClient }"} <span className="k">from</span> <span className="s">&quot;@loofta/pay-sdk&quot;</span>;</>,
     <>&nbsp;</>,
     <><span className="k">await</span> loofta.partner.<span className="c">createBatch</span>({"{"}</>,
-    <>&nbsp;&nbsp;label: <span className="s">&quot;{c.s.brand} creator fund&quot;</span>,</>,
+    <>&nbsp;&nbsp;label: <span className="s">&quot;Monthly payouts&quot;</span>,</>,
     <>&nbsp;&nbsp;rows: [</>,
     <>&nbsp;&nbsp;&nbsp;&nbsp;{"{ email: "}<span className="s">&quot;mira@example.com&quot;</span>{", amount: 400 },"}</>,
     <>&nbsp;&nbsp;&nbsp;&nbsp;{"{ email: "}<span className="s">&quot;jon@example.com&quot;</span>{", amount: 250 },"}</>,
@@ -356,7 +324,7 @@ function Api({ c }: { c: Ctx }) {
       </Browser>
       <div className={`g ${p >= 1 ? "on" : ""}`} style={{ position: "absolute", right: -4, bottom: -22, background: "#fff", borderRadius: 16, padding: "14px 18px", boxShadow: "0 24px 50px -12px rgba(0,0,0,.35)", minWidth: 250 }}>
         <div style={{ fontWeight: 650, fontSize: 16 }}>Batch created</div>
-        <div className="mut" style={{ fontSize: 14.5, margin: "2px 0 8px" }}>5 creators · $1,000.00</div>
+        <div className="mut" style={{ fontSize: 14.5, margin: "2px 0 8px" }}>5 people · $1,000.00</div>
         <span className="pillx amber">Waiting for approval</span>
       </div>
     </div>
@@ -371,7 +339,7 @@ function Approve() {
       <Browser url="pay.loofta.com/partner/portal" dark>
         <div className="t-pad">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <div><div style={{ fontWeight: 650, fontSize: 18 }}>Summer Quest creator fund</div><div className="mut" style={{ fontSize: 14.5 }}>5 creators · $1,000.00 · created by API</div></div>
+            <div><div style={{ fontWeight: 650, fontSize: 18 }}>Monthly payouts</div><div className="mut" style={{ fontSize: 14.5 }}>5 people · $1,000.00 · created by API</div></div>
             <span className={`pillx ${p >= 3 ? "green" : "amber"}`}>{p >= 3 ? "Paid, emails sent" : "Needs approval"}</span>
           </div>
           <div style={{ margin: "16px 0 4px" }}>
@@ -406,8 +374,8 @@ function Email({ c }: { c: Ctx }) {
             <span className="mut" style={{ fontSize: 13.5 }}>now</span>
           </div>
           <On show={p >= 1}>
-            <div style={{ fontSize: 24, fontWeight: 650, letterSpacing: "-0.02em", margin: "8px 0 8px" }}>Your $400 creator payout is ready</div>
-            <div className="mut" style={{ fontSize: 16.5, lineHeight: 1.5 }}>Congratulations Mira, you finished #1 in the Summer Quest creator fund with 512,000 views.</div>
+            <div style={{ fontSize: 24, fontWeight: 650, letterSpacing: "-0.02em", margin: "8px 0 8px" }}>Your $400 payout is ready</div>
+            <div className="mut" style={{ fontSize: 16.5, lineHeight: 1.5 }}>Congratulations Mira, your payout from {c.s.brand} is ready.</div>
           </On>
           <On show={p >= 2} delay={100}>
             <div className="btnx" style={{ background: c.accent, color: c.on, marginTop: 18, animation: "t-pulse 1.8s ease-out 2" }}>Withdraw your payout</div>
@@ -471,14 +439,13 @@ export function Tutorial() {
   const c: Ctx = { s: setup, accent: `#${setup.color}`, on: onColor(setup.color) };
   const steps: Step[] = [
     { tag: "", h: null, p: "", glow: "rgba(255,106,31,.14)", scene: () => <Intro />, center: true },
-    { tag: "The example", h: <>Meet {setup.brand}.</>, p: `${setup.brand} is a creator platform. Every month the top creators share a fund, and ${setup.brand} wants to pay them without building a payments system.`, glow: "rgba(59,130,246,.12)", scene: (x) => <Store c={x} /> },
     { tag: "1 · Set up", h: <>Make it yours.</>, p: "Add your name, your logo and your own fee. Loofta's withdraw page wears your brand, and you earn on every withdrawal.", glow: "rgba(168,85,247,.13)", scene: (x) => <Setup c={x} /> },
     { tag: "2 · Fund", h: <>Fund one wallet.</>, p: "Send USDC once. Your team controls the wallet and Loofta never holds the keys. Network fees are paid in USDC too.", glow: "rgba(34,197,94,.12)", scene: () => <Wallet /> },
     { tag: "3 · Pay", h: <>One call pays everyone.</>, p: "Your platform sends a batch with the SDK. The key can create payouts but can never move money.", glow: "rgba(15,23,42,.1)", scene: (x) => <Api c={x} /> },
-    { tag: "4 · Approve", h: <>Your team approves.</>, p: "One tap releases the whole batch from the wallet. Every creator is emailed the moment it goes through.", glow: "rgba(255,106,31,.13)", scene: () => <Approve /> },
+    { tag: "4 · Approve", h: <>Your team approves.</>, p: "One tap releases the whole batch from the wallet. Everyone is emailed the moment it goes through.", glow: "rgba(255,106,31,.13)", scene: () => <Approve /> },
     { tag: "5 · Notify", h: <>They get an email.</>, p: "No signup, no wallet, no forms. It comes from your brand and they sign in with the address it was sent to.", glow: "rgba(236,72,153,.11)", scene: (x) => <Email c={x} /> },
     { tag: "6 · Withdraw", h: <>They cash out on your page.</>, p: "This is the real Loofta withdraw page, with your name and logo on it. Bank, card, USDC, Wise, PayPal and more. Every fee is shown before they confirm, and you build none of it.", glow: "rgba(59,130,246,.12)", scene: (x) => <Withdraw c={x} /> },
-    { tag: "7 · Earn", h: <>You earn on every withdrawal.</>, p: "The fee you set goes to you each time a creator cashes out. Loofta's own fee is separate and shown to them up front.", glow: "rgba(34,197,94,.13)", scene: (x) => <Earn c={x} /> },
+    { tag: "7 · Earn", h: <>You earn on every withdrawal.</>, p: "The fee you set goes to you each time someone cashes out. Loofta's own fee is separate and shown to them up front.", glow: "rgba(34,197,94,.13)", scene: (x) => <Earn c={x} /> },
   ];
   const total = steps.length + 1;
   const [i, setI] = useState(0);
@@ -505,7 +472,7 @@ export function Tutorial() {
       <div className="t-top">
         <a href="/partner" aria-label="Loofta partners" style={{ padding: 0 }}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/loofta.svg" alt="Loofta" style={{ height: 26, width: "auto", display: "block" }} /></a>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <a href={STORE_HREF}>Example store</a>
+          <a href={WITHDRAW_DEMO_HREF}>Withdraw page demo</a>
           <a className="pill" href={PORTAL_HREF}>Try now</a>
         </span>
       </div>
@@ -518,7 +485,7 @@ export function Tutorial() {
               <p className="t-p" style={{ margin: "0 auto" }}>Create your partner account, set your name, logo and fee, and send your first batch. It takes a few minutes.</p>
               <div className="t-row">
                 <a href={PORTAL_HREF} className="t-btn big accent">Try now</a>
-                <a href={STORE_HREF} className="t-btn big light">See the example store</a>
+                <a href={WITHDRAW_DEMO_HREF} className="t-btn big light">See the withdraw page</a>
               </div>
               <div className="t-row" style={{ marginTop: 14 }}>
                 <button className="t-btn light" onClick={() => go(0)}>Watch again</button>

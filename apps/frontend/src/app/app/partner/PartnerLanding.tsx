@@ -43,7 +43,7 @@ export function PartnerLanding() {
         </a>
         <div className="flex items-center gap-6 text-[15px] text-[#6E6E73]">
           <a href="/docs" className="hidden transition-colors hover:text-[#1D1D1F] sm:inline">Docs</a>
-          <a href="mailto:hello@loofta.xyz" className="hidden transition-colors hover:text-[#1D1D1F] sm:inline">Support</a>
+          <a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="hidden transition-colors hover:text-[#1D1D1F] sm:inline">Support</a>
           {!ready ? null : authenticated ? (
             <UserMenu username={username} email={email} isDarkPage={false} onLogout={() => void logout()} />
           ) : (
@@ -58,7 +58,7 @@ export function PartnerLanding() {
       </div>
       <footer className="flex flex-wrap justify-between gap-4 px-[clamp(20px,3.5vw,48px)] py-6 text-[14px] text-[#86868B]">
         <span className="flex gap-5"><a href="/terms" className="hover:text-[#1D1D1F]">Terms</a><a href="/privacy" className="hover:text-[#1D1D1F]">Privacy</a></span>
-        <span className="flex gap-5"><a href="/docs" className="hover:text-[#1D1D1F]">Docs</a><a href="mailto:hello@loofta.xyz" className="hover:text-[#1D1D1F]">Support</a></span>
+        <span className="flex gap-5"><a href="/docs" className="hover:text-[#1D1D1F]">Docs</a><a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="hover:text-[#1D1D1F]">Support</a></span>
       </footer>
     </div>
   );

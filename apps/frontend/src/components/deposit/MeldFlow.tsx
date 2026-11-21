@@ -42,7 +42,7 @@ function MethodIcon({ method, label }: { method?: string; label?: string }) {
   // Cash-out options carry no method, so a card payout is told apart by its label
   const card = method === "CREDIT_DEBIT_CARD" || /card/i.test(label ?? "");
   return (
-    <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#1C1C22]">
+    <span className="grid h-11 w-11 place-items-center rounded-xl bg-[color:var(--pt-surface3,#1C1C22)]">
       <img src={`/images/icons/${card ? "card-chip" : "bank"}.svg`} alt="" className="h-7 w-7 object-contain" />
     </span>
   );
@@ -182,9 +182,9 @@ export function MeldFlow({
   if (opened) {
     return (
       <div className="mt-4 flex flex-col gap-4">
-        <div className="rounded-2xl border border-white/10 bg-[#1A1A20] p-4">
-          <p className="text-base font-bold text-white" style={{ fontFamily: SORA }}>Finish your cash-out in the new tab</p>
-          <p className="mt-1.5 text-sm text-[#C8C6D0]">Add your bank details there. When you are done, it brings you back to Loofta to send the USDC.</p>
+        <div className="rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface3,#1A1A20)] p-4">
+          <p className="text-base font-bold text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>Finish your cash-out in the new tab</p>
+          <p className="mt-1.5 text-sm text-[color:var(--pt-ink2,#C8C6D0)]">Add your bank details there. When you are done, it brings you back to Loofta to send the USDC.</p>
         </div>
         <a
           href={opened}
@@ -194,7 +194,7 @@ export function MeldFlow({
         >
           Open it again
         </a>
-        <button type="button" onClick={() => setOpened(null)} className="text-sm font-semibold text-[#C8C6D0] hover:text-white">Change the amount</button>
+        <button type="button" onClick={() => setOpened(null)} className="text-sm font-semibold text-[color:var(--pt-ink2,#C8C6D0)] hover:text-[color:var(--pt-ink,#fff)]">Change the amount</button>
       </div>
     );
   }
@@ -202,10 +202,10 @@ export function MeldFlow({
   if (unsupported) {
     return (
       <div className="mt-4 flex flex-col gap-4">
-        <button type="button" onClick={onBack} className="self-start text-sm font-semibold text-[#C8C6D0] hover:text-white">Back</button>
-        <div className="rounded-2xl border border-white/10 bg-[#1A1A20] p-4">
-          <p className="text-base font-bold text-white" style={{ fontFamily: SORA }}>Bank cash-out isn&apos;t available in your country yet</p>
-          <p className="mt-1.5 text-sm text-[#C8C6D0]">Use PAJ Cash or Private P2P instead. Both are on the previous screen.</p>
+        <button type="button" onClick={onBack} className="self-start text-sm font-semibold text-[color:var(--pt-ink2,#C8C6D0)] hover:text-[color:var(--pt-ink,#fff)]">Back</button>
+        <div className="rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface3,#1A1A20)] p-4">
+          <p className="text-base font-bold text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>Bank cash-out isn&apos;t available in your country yet</p>
+          <p className="mt-1.5 text-sm text-[color:var(--pt-ink2,#C8C6D0)]">Use PAJ Cash or Private P2P instead. Both are on the previous screen.</p>
         </div>
       </div>
     );
@@ -213,20 +213,20 @@ export function MeldFlow({
 
   return (
     <div className="mt-4 flex flex-col gap-4">
-      <button type="button" onClick={onBack} className="self-start text-sm font-semibold text-[#C8C6D0] hover:text-white">
+      <button type="button" onClick={onBack} className="self-start text-sm font-semibold text-[color:var(--pt-ink2,#C8C6D0)] hover:text-[color:var(--pt-ink,#fff)]">
         {sell ? "Cash out to a bank" : "Deposit with card"}
       </button>
 
       <div>
-        <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#1A1A20] px-4 py-3 focus-within:border-[#FF7A2A]/60">
-          <span className="text-sm font-semibold text-[#8A8893]">{sell ? "You cash out (USDC)" : "You pay (USD)"}</span>
+        <label className="flex items-center justify-between rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface3,#1A1A20)] px-4 py-3 focus-within:border-[#FF7A2A]/60">
+          <span className="text-sm font-semibold text-[color:var(--pt-ink3,#8A8893)]">{sell ? "You cash out (USDC)" : "You pay (USD)"}</span>
           <input
             autoFocus
             inputMode="decimal"
             value={amount}
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
             placeholder={sell ? "0" : "50"}
-            className="w-32 bg-transparent text-right text-3xl font-bold text-white outline-none"
+            className="w-32 bg-transparent text-right text-3xl font-bold text-[color:var(--pt-ink,#fff)] outline-none"
             style={{ fontFamily: SORA }}
           />
         </label>
@@ -237,23 +237,23 @@ export function MeldFlow({
               type="button"
               disabled={sell && spendable <= 0}
               onClick={() => setAmount(c.value)}
-              className="rounded-full border border-white/10 px-3 py-1.5 text-sm font-semibold text-[#C8C6D0] hover:bg-white/[0.06] disabled:opacity-40"
+              className="rounded-full border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] px-3 py-1.5 text-sm font-semibold text-[color:var(--pt-ink2,#C8C6D0)] hover:bg-[color:var(--pt-w0p06,rgba(255,255,255,0.06))] disabled:opacity-40"
             >
               {c.label}
             </button>
           ))}
-          {sell && <span className="ml-auto text-sm text-[#8A8893]">Balance ${spendable.toFixed(2)}</span>}
+          {sell && <span className="ml-auto text-sm text-[color:var(--pt-ink3,#8A8893)]">Balance ${spendable.toFixed(2)}</span>}
         </div>
         {overBalance && <p className="mt-2 text-sm text-red-400">That is more than your ${spendable.toFixed(2)} balance.</p>}
       </div>
 
       {amountNum > 0 && !overBalance && (
         <div className="flex flex-col gap-2">
-          <p className="text-sm font-semibold text-[#C8C6D0]">{loading && !options ? "Finding your options" : options?.length ? "Choose how" : ""}</p>
+          <p className="text-sm font-semibold text-[color:var(--pt-ink2,#C8C6D0)]">{loading && !options ? "Finding your options" : options?.length ? "Choose how" : ""}</p>
 
           {loading && !options && (
             <div className="flex flex-col gap-2">
-              {[0, 1].map((i) => <div key={i} className="h-[72px] animate-pulse rounded-2xl border border-white/[0.07] bg-[#1A1A20]" />)}
+              {[0, 1].map((i) => <div key={i} className="h-[72px] animate-pulse rounded-2xl border border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))] bg-[color:var(--pt-surface3,#1A1A20)]" />)}
             </div>
           )}
 
@@ -265,8 +265,8 @@ export function MeldFlow({
                 type="button"
                 onClick={() => setSelected(keyOf(o))}
                 className={cn(
-                  "flex w-full items-center gap-3 rounded-2xl border bg-[#1A1A20] px-3.5 py-3 text-left transition-opacity",
-                  on ? "border-[#FF7A2A]" : "border-white/[0.07] hover:border-white/20",
+                  "flex w-full items-center gap-3 rounded-2xl border bg-[color:var(--pt-surface3,#1A1A20)] px-3.5 py-3 text-left transition-opacity",
+                  on ? "border-[#FF7A2A]" : "border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))] hover:border-[color:var(--pt-w20,rgba(255,255,255,0.2))]",
                   loading && "opacity-60",
                 )}
               >
@@ -277,30 +277,30 @@ export function MeldFlow({
                   {options.length > 1 && o.receive === bestReceive && (
                     <span className="mb-1 inline-block whitespace-nowrap rounded-full bg-emerald-500/15 px-2 py-0.5 text-sm font-semibold text-emerald-300">Best rate</span>
                   )}
-                  <span className="block text-base font-bold leading-tight text-white" style={{ fontFamily: SORA }}>{o.label}</span>
+                  <span className="block text-base font-bold leading-tight text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>{o.label}</span>
                   {sell && o.feeUsdc != null && (
-                    <span className="mt-0.5 block text-sm text-[#8A8893]">
+                    <span className="mt-0.5 block text-sm text-[color:var(--pt-ink3,#8A8893)]">
                       {o.feeUsdc > 0.005 ? `Fee about ${o.feeUsdc.toFixed(2)} USDC` : "No fee"}
                     </span>
                   )}
                   {!sell && (
-                    <span className="mt-0.5 block text-sm text-[#8A8893]">
+                    <span className="mt-0.5 block text-sm text-[color:var(--pt-ink3,#8A8893)]">
                       {o.fee > 0 ? `All-in cost ${fiat(o.fee, o.currency)}` : "No extra cost"}
                     </span>
                   )}
                   {o.eta && (
-                    <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-[#C8C6D0]">
+                    <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-[color:var(--pt-ink2,#C8C6D0)]">
                       <Clock className="h-3.5 w-3.5" />
                       Usually {o.eta}
                     </span>
                   )}
                 </span>
                 <span className="text-right">
-                  <span className="block text-sm text-[#8A8893]">You get</span>
-                  <span className="block text-lg font-bold text-white" style={{ fontFamily: SORA }}>
+                  <span className="block text-sm text-[color:var(--pt-ink3,#8A8893)]">You get</span>
+                  <span className="block text-lg font-bold text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>
                     {sell ? fiat(o.receive, o.currency) : `${o.receive.toFixed(2)} USDC`}
                   </span>
-                  <span className="block text-sm text-[#8A8893]">
+                  <span className="block text-sm text-[color:var(--pt-ink3,#8A8893)]">
                     {sell ? (o.feeUsdc != null ? `= ${(amountNum - o.feeUsdc).toFixed(2)} USDC` : `for ${amountNum} USDC`) : `for $${amountNum}`}
                   </span>
                 </span>
@@ -308,7 +308,7 @@ export function MeldFlow({
             );
           })}
 
-          {notice && !loading && <p className="rounded-2xl border border-white/10 bg-[#1A1A20] px-4 py-3 text-sm text-[#C8C6D0]">{notice}</p>}
+          {notice && !loading && <p className="rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface3,#1A1A20)] px-4 py-3 text-sm text-[color:var(--pt-ink2,#C8C6D0)]">{notice}</p>}
         </div>
       )}
 
@@ -324,7 +324,7 @@ export function MeldFlow({
             ? sell ? `Cash out ${amountNum} USDC` : `Pay $${amountNum}${choice.method === "APPLE_PAY" || choice.method === "GOOGLE_PAY" ? ` with ${choice.label}` : ""}`
             : "Continue"}
       </button>
-      <p className="text-center text-sm text-[#8A8893]">
+      <p className="text-center text-sm text-[color:var(--pt-ink3,#8A8893)]">
         {sell ? "You add your bank details next. Loofta covers the network fee. Times are typical, and a first-time verification can add a few minutes." : "You confirm your card or Apple Pay next. USDC lands in your Loofta balance. Times are typical, and a first-time verification can add a few minutes."}
       </p>
     </div>

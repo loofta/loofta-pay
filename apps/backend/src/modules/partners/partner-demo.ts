@@ -12,9 +12,10 @@ export const DEMO_ORG_ID = 'demo';
 
 export const DEMO_PARTNER: PublicPartner = {
   org_id: DEMO_ORG_ID,
-  name: 'Rally',
+  name: 'Demo store',
   description: 'Demo campaign. Nothing on this page moves real money.',
-  logo_url: null,
+  // A test logo, so the sample page always shows one. A link can pick one of the demo store's sample logos instead.
+  logo_url: 'https://pay.loofta.com/demo-store-logo.svg',
   brand_color: '#ff7a2a',
   withdraw_min_usd: 1,
   fee_fixed_usd: 0.25,
@@ -26,8 +27,8 @@ export const DEMO_PARTNER: PublicPartner = {
 const DEMO_PRIZE_USD = 120;
 const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
 const DEMO_HISTORY = [
-  { payment_id: 'demo-past-2', amount: 45, message: 'Summer Quest, weekly bonus', partner_fee_usdc: 0.7, daysAgo: 9 },
-  { payment_id: 'demo-past-1', amount: 200, message: 'Spring Quest, 2nd place', partner_fee_usdc: 2.25, daysAgo: 41 },
+  { payment_id: 'demo-past-2', amount: 45, message: 'Sample payout, weekly bonus', partner_fee_usdc: 0.7, daysAgo: 9 },
+  { payment_id: 'demo-past-1', amount: 200, message: 'Sample payout, last month', partner_fee_usdc: 2.25, daysAgo: 41 },
 ];
 
 /** The sample partner takes its options from the link, so a demo can show every combination. Real partners never do. */
@@ -77,7 +78,7 @@ export function demoQuote(opts: DemoQuery = {}): WithdrawQuote {
       {
         payment_id: 'demo-prize',
         amount: prize,
-        message: 'Summer Quest, 1st place',
+        message: 'Sample payout',
         created_at: new Date().toISOString(),
         funded: true,
       },

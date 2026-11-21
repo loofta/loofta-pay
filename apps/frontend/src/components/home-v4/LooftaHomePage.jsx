@@ -2646,7 +2646,7 @@ class HomePage extends React.Component {
               </div>
               <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                 <a
-                  href="/partners"
+                  href="https://pay.loofta.com/partner"
                   style={{
                     padding: "18px 30px",
                     borderRadius: "999px",

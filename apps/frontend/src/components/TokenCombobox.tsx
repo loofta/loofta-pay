@@ -173,9 +173,9 @@ export function TokenCombobox({
 					aria-expanded={open}
 					className={cn(
 						"w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl",
-						"bg-white/[0.06] border border-white/[0.09]",
-						"hover:bg-white/[0.09] hover:border-white/[0.14]",
-						"transition-all duration-150 outline-none focus-visible:ring-2 focus-visible:ring-white/20",
+						"bg-[color:var(--pt-w0p06,rgba(255,255,255,0.06))] border border-[color:var(--pt-w0p09,rgba(255,255,255,0.09))]",
+						"hover:bg-[color:var(--pt-w0p09,rgba(255,255,255,0.09))] hover:border-[color:var(--pt-w0p14,rgba(255,255,255,0.14))]",
+						"transition-all duration-150 outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--pt-w20,rgba(255,255,255,0.2))]",
 						className
 					)}
 				>
@@ -183,14 +183,14 @@ export function TokenCombobox({
 						<TokenIcon token={selectedToken ?? undefined} chain={selectedToken?.chain} size={26} />
 						<span className={cn(
 							"text-base font-medium truncate",
-							light ? "text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100" : "text-white"
+							light ? "text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100" : "text-[color:var(--pt-ink,#fff)]"
 						)}>
 							{selectedToken ? selectedToken.symbol : placeholder}
 						</span>
 						{selectedToken ? (
 							<span className={cn(
 								"text-sm ml-0.5 truncate",
-								light ? "text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400" : "text-white/45"
+								light ? "text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400" : "text-[color:var(--pt-w45,rgba(255,255,255,0.45))]"
 							)}>
 								{formatChainLabel(selectedToken.chain)}
 							</span>
@@ -198,7 +198,7 @@ export function TokenCombobox({
 					</div>
 					<ChevronsUpDown className={cn(
 						"h-4 w-4 shrink-0",
-						light ? "text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500" : "text-white/35"
+						light ? "text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500" : "text-[color:var(--pt-w35,rgba(255,255,255,0.35))]"
 					)} />
 				</button>
 			</DialogTrigger>
@@ -224,14 +224,14 @@ export function TokenCombobox({
 						"absolute inset-0 rounded-none border-0",
 						// Desktop: natural size inside the flex center shell
 						"sm:relative sm:inset-auto sm:h-[min(620px,88vh)] sm:w-[min(96vw,540px)] sm:max-w-[540px]",
-						"sm:rounded-2xl sm:border sm:border-white/[0.08] sm:shadow-2xl sm:shadow-black/60",
+						"sm:rounded-2xl sm:border sm:border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] sm:shadow-2xl sm:shadow-black/60",
 						"p-0 overflow-hidden"
 					)}
 				>
 					{/* Header */}
-					<div className="px-5 py-4 border-b border-white/[0.07] shrink-0 flex items-center justify-between">
-						<DialogTitle className="text-lg font-semibold text-white tracking-tight">Select token</DialogTitle>
-						<DialogPrimitive.Close className="rounded-lg p-1.5 text-white/40 hover:text-white hover:bg-white/10 transition-all focus:outline-none">
+					<div className="px-5 py-4 border-b border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))] shrink-0 flex items-center justify-between">
+						<DialogTitle className="text-lg font-semibold text-[color:var(--pt-ink,#fff)] tracking-tight">Select token</DialogTitle>
+						<DialogPrimitive.Close className="rounded-lg p-1.5 text-[color:var(--pt-w40,rgba(255,255,255,0.4))] hover:text-[color:var(--pt-ink,#fff)] hover:bg-[color:var(--pt-w10,rgba(255,255,255,0.1))] transition-all focus:outline-none">
 							<X className="h-4 w-4" />
 							<span className="sr-only">Close</span>
 						</DialogPrimitive.Close>
@@ -241,12 +241,12 @@ export function TokenCombobox({
 					<div className="flex flex-col sm:flex-row flex-1 min-h-0 overflow-hidden">
 						{/* Network selector: horizontal strip on mobile, vertical sidebar on desktop */}
 						<div className={cn(
-							"shrink-0 border-b sm:border-b-0 sm:border-r border-white/[0.07]",
+							"shrink-0 border-b sm:border-b-0 sm:border-r border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))]",
 							"flex flex-row sm:flex-col",
 							"overflow-x-auto sm:overflow-x-hidden sm:overflow-y-auto",
-							"sm:w-44 p-2 bg-white/[0.02]"
+							"sm:w-44 p-2 bg-[color:var(--pt-w0p02,rgba(255,255,255,0.02))]"
 						)}>
-							<div className="hidden sm:block px-3 py-2 text-sm font-semibold uppercase tracking-widest text-white/30">
+							<div className="hidden sm:block px-3 py-2 text-sm font-semibold uppercase tracking-widest text-[color:var(--pt-w30,rgba(255,255,255,0.3))]">
 								Network
 							</div>
 							<div className="flex flex-row sm:flex-col gap-1">
@@ -257,8 +257,8 @@ export function TokenCombobox({
 									className={cn(
 										"whitespace-nowrap text-left rounded-xl px-3 py-2 text-sm font-medium transition-all",
 										!selectedChain
-											? "bg-white/15 text-white shadow-sm"
-											: "text-white/55 hover:bg-white/8 hover:text-white/90"
+											? "bg-[color:var(--pt-w15,rgba(255,255,255,0.15))] text-[color:var(--pt-ink,#fff)] shadow-sm"
+											: "text-[color:var(--pt-w55,rgba(255,255,255,0.55))] hover:bg-[color:var(--pt-w8,rgba(255,255,255,0.08))] hover:text-[color:var(--pt-w90,rgba(255,255,255,0.9))]"
 									)}
 								>
 									<span className="inline-flex items-center gap-2">All networks</span>
@@ -273,8 +273,8 @@ export function TokenCombobox({
 											className={cn(
 												"whitespace-nowrap text-left rounded-xl px-3 py-2 text-sm font-medium transition-all",
 												active
-													? "bg-white/15 text-white shadow-sm"
-													: "text-white/55 hover:bg-white/8 hover:text-white/90"
+													? "bg-[color:var(--pt-w15,rgba(255,255,255,0.15))] text-[color:var(--pt-ink,#fff)] shadow-sm"
+													: "text-[color:var(--pt-w55,rgba(255,255,255,0.55))] hover:bg-[color:var(--pt-w8,rgba(255,255,255,0.08))] hover:text-[color:var(--pt-w90,rgba(255,255,255,0.9))]"
 											)}
 										>
 											<span className="inline-flex items-center gap-2">
@@ -302,19 +302,19 @@ export function TokenCombobox({
 						{/* Token list */}
 						<div className="flex-1 min-w-0 min-h-0 overflow-hidden">
 							<Command className={cn(
-								"h-full flex flex-col bg-transparent text-white",
-								"[&_[cmdk-input-wrapper]]:border-white/[0.07]",
-								"[&_[cmdk-input]]:text-white [&_[cmdk-input]]:text-base [&_[cmdk-input]]:placeholder:text-white/30",
-								"[&_[cmdk-group-heading]]:text-white/30 [&_[cmdk-group-heading]]:text-sm [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest",
-								"[&_[cmdk-item]]:text-white [&_[cmdk-item]]:rounded-xl [&_[cmdk-item]]:px-3 [&_[cmdk-item]]:py-2.5",
-								"[&_[cmdk-item][data-selected='true']]:bg-white/10",
+								"h-full flex flex-col bg-transparent text-[color:var(--pt-ink,#fff)]",
+								"[&_[cmdk-input-wrapper]]:border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))]",
+								"[&_[cmdk-input]]:text-[color:var(--pt-ink,#fff)] [&_[cmdk-input]]:text-base [&_[cmdk-input]]:placeholder:text-[color:var(--pt-w30,rgba(255,255,255,0.3))]",
+								"[&_[cmdk-group-heading]]:text-[color:var(--pt-w30,rgba(255,255,255,0.3))] [&_[cmdk-group-heading]]:text-sm [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest",
+								"[&_[cmdk-item]]:text-[color:var(--pt-ink,#fff)] [&_[cmdk-item]]:rounded-xl [&_[cmdk-item]]:px-3 [&_[cmdk-item]]:py-2.5",
+								"[&_[cmdk-item][data-selected='true']]:bg-[color:var(--pt-w10,rgba(255,255,255,0.1))]",
 							)}>
 								<CommandInput ref={inputRef} placeholder={searchPlaceholder} value={query} onValueChange={setQuery} />
 								<CommandList className="flex-1 max-h-none overflow-y-auto px-2 py-2">
 									{loading ? (
-										<div className="py-6 text-center text-sm text-white/40">Searching…</div>
+										<div className="py-6 text-center text-sm text-[color:var(--pt-w40,rgba(255,255,255,0.4))]">Searching…</div>
 									) : null}
-									<CommandEmpty className="py-8 text-center text-sm text-white/40">No token found.</CommandEmpty>
+									<CommandEmpty className="py-8 text-center text-sm text-[color:var(--pt-w40,rgba(255,255,255,0.4))]">No token found.</CommandEmpty>
 									{isSearching ? (
 										<CommandGroup heading="Results">
 											{searchItems.map((it) => {
@@ -332,12 +332,12 @@ export function TokenCombobox({
 														<div className="flex items-center gap-3.5 w-full">
 															<TokenIcon token={it.token} chain={it.chain} size={32} />
 															<div className="flex-1 overflow-hidden">
-																<div className="text-base font-medium text-white truncate">{it.symbol}</div>
-																<div className="text-sm text-white/45 truncate">
+																<div className="text-base font-medium text-[color:var(--pt-ink,#fff)] truncate">{it.symbol}</div>
+																<div className="text-sm text-[color:var(--pt-w45,rgba(255,255,255,0.45))] truncate">
 																	{it.name} · {formatChainLabel(it.chain)}
 																</div>
 															</div>
-															<Check className={cn("h-4 w-4 text-white/60 shrink-0", isSelected ? "opacity-100" : "opacity-0")} />
+															<Check className={cn("h-4 w-4 text-[color:var(--pt-w60,rgba(255,255,255,0.6))] shrink-0", isSelected ? "opacity-100" : "opacity-0")} />
 														</div>
 													</CommandItem>
 												);
@@ -366,15 +366,15 @@ export function TokenCombobox({
 														<div className="flex items-center gap-3.5 w-full">
 															<TokenIcon token={tok ?? g} chain={effectiveChain} size={32} />
 															<div className="flex-1 overflow-hidden">
-																<div className="text-base font-medium text-white truncate">{g.symbol}</div>
-																<div className="text-sm text-white/45 truncate">
+																<div className="text-base font-medium text-[color:var(--pt-ink,#fff)] truncate">{g.symbol}</div>
+																<div className="text-sm text-[color:var(--pt-w45,rgba(255,255,255,0.45))] truncate">
 																	{g.name} · {formatChainLabel(effectiveChain)}
 																	{showMultiChain && (
-																		<span className="ml-1.5 text-white/30">+{availableChains.length - 1}</span>
+																		<span className="ml-1.5 text-[color:var(--pt-w30,rgba(255,255,255,0.3))]">+{availableChains.length - 1}</span>
 																	)}
 																</div>
 															</div>
-															<Check className={cn("h-4 w-4 text-white/60 shrink-0", isSelected ? "opacity-100" : "opacity-0")} />
+															<Check className={cn("h-4 w-4 text-[color:var(--pt-w60,rgba(255,255,255,0.6))] shrink-0", isSelected ? "opacity-100" : "opacity-0")} />
 														</div>
 													</CommandItem>
 												);

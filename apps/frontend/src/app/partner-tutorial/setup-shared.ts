@@ -10,7 +10,7 @@ export const LOGOS = [
 
 export type Setup = { brand: string; logo: string; color: string; fee: number; pct: number; enabled: string[]; showHistory: boolean };
 
-export const SETUP: Setup = { brand: "Rally", logo: "ring", color: "ea580c", fee: 0.25, pct: 1, enabled: ["usdc", "token", "bank", "p2p"], showHistory: true };
+export const SETUP: Setup = { brand: "Acme", logo: "ring", color: "ea580c", fee: 0.25, pct: 1, enabled: ["usdc", "token", "bank", "p2p"], showHistory: true };
 
 /** Same rule as Loofta: flat + percent, never more than 25% of the payout. */
 export function feeFor(setup: Pick<Setup, "fee" | "pct">, amount: number): number {

@@ -61,17 +61,17 @@ export function ProposalsPanel({ treasury, onDone, only }: { treasury: Treasury;
       {error && <Notice kind="error">{error}</Notice>}
       {ok && <Notice kind="ok">{ok}</Notice>}
       {list.map((p) => (
-        <div key={p.id} className="flex flex-col gap-3 rounded-[14px] border border-white/[0.08] bg-[#121214] p-5">
+        <div key={p.id} className="flex flex-col gap-3 rounded-[14px] border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)] p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="text-[15px] font-medium text-[#EDEDEF]">{describe(p)}</div>
+            <div className="text-[15px] font-medium text-[color:var(--pt-ink,#EDEDEF)]">{describe(p)}</div>
             <Pill tone={STATUS[p.status].tone} dot>
               {STATUS[p.status].label}
             </Pill>
           </div>
-          <div className="text-[14px] text-[#B4B4BC]">
+          <div className="text-[14px] text-[color:var(--pt-ink2b,#B4B4BC)]">
             {p.approvals_count} of {p.approvals_needed} approvals{p.approvals.length ? ` · ${p.approvals.join(", ")}` : ""}
           </div>
-          {p.status === "stale" && <div className="text-[14px] text-[#B4B4BC]">The signers or approvals needed changed after this was created, so it can no longer run. Create it again.</div>}
+          {p.status === "stale" && <div className="text-[14px] text-[color:var(--pt-ink2b,#B4B4BC)]">The signers or approvals needed changed after this was created, so it can no longer run. Create it again.</div>}
           <div className="flex flex-wrap justify-end gap-2.5">
             {p.can_approve && (
               <>
@@ -158,11 +158,11 @@ export function WalletTab({ orgId, myRole, treasury }: { orgId: string; myRole: 
       )}
 
       {!s ? (
-        <p className="text-[15px] text-[#C9C9D0]">Loading...</p>
+        <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>
       ) : !s.created ? (
         <Section title="Create your company wallet" desc="Your own Loofta wallet becomes the first signer, and you can add teammates and choose how many approvals are needed afterwards.">
           <div className="space-y-4">
-            <p className="max-w-2xl text-[15px] leading-7 text-[#C9C9D0]">
+            <p className="max-w-2xl text-[15px] leading-7 text-[color:var(--pt-ink2,#C9C9D0)]">
               Loofta pays the one-off setup cost{s.creation_fee_sol !== null ? ` (about ${s.creation_fee_sol} SOL)` : ""}. Loofta is not a signer, so only you and the people you add can move the money.
             </p>
             {s.can_create ? (
@@ -188,12 +188,12 @@ export function WalletTab({ orgId, myRole, treasury }: { orgId: string; myRole: 
             {s.proposals.some((p) => ["active", "approved", "stale"].includes(p.status)) ? (
               <ProposalsPanel treasury={treasury} only={(p) => ["active", "approved", "stale"].includes(p.status)} />
             ) : (
-              <p className="text-[15px] text-[#C9C9D0]">Nothing is waiting for approval.</p>
+              <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Nothing is waiting for approval.</p>
             )}
           </Section>
 
           <Section title="Deposit address" desc="Send USDC on Solana to this address to fund payouts. You do not need SOL.">
-            <CodeBox title="Company wallet · Solana" value={s.vault} copied={copied} onCopy={() => copy(s.vault)} />
+            <CodeBox plain title="Company wallet · Solana" value={s.vault} copied={copied} onCopy={() => copy(s.vault)} />
             <div className="mt-3">
               <Btn kind="ghost" onClick={() => void treasury.refresh()}>
                 <CopyIcon /> Refresh balance
@@ -206,8 +206,8 @@ export function WalletTab({ orgId, myRole, treasury }: { orgId: string; myRole: 
               {s.members.map((m) => (
                 <Row key={m.wallet} template="minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 110px">
                   <span className="truncate font-medium">{m.is_me ? "You" : m.name ?? "Team member"}</span>
-                  <span className="truncate font-mono text-[13.5px] text-[#C9C9D0]">{short(m.wallet)}</span>
-                  <span className="text-[#C9C9D0]">{[m.can_initiate && "propose", m.can_vote && "approve", m.can_execute && "run"].filter(Boolean).join(", ")}</span>
+                  <span className="truncate font-mono text-[13.5px] text-[color:var(--pt-ink2,#C9C9D0)]">{short(m.wallet)}</span>
+                  <span className="text-[color:var(--pt-ink2,#C9C9D0)]">{[m.can_initiate && "propose", m.can_vote && "approve", m.can_execute && "run"].filter(Boolean).join(", ")}</span>
                   <span className="text-right">
                     {canManage && m.member_id && !m.is_me && (
                       <Btn kind="ghost" disabled={busy !== null || !s.am_member} onClick={() => void change("remove" + m.wallet, { remove_member_ids: [m.member_id] }, "Proposed. The change applies once enough signers approve it.")}>
@@ -221,9 +221,9 @@ export function WalletTab({ orgId, myRole, treasury }: { orgId: string; myRole: 
             {canManage && s.addable.length > 0 && (
               <div className="mt-5 flex flex-col gap-3">
                 {s.addable.map((a) => (
-                  <div key={a.member_id} className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-white/[0.08] bg-[#121214] px-5 py-3.5">
-                    <div className="text-[15px] text-[#EDEDEF]">
-                      {a.name ?? "Team member"} <span className="text-[#9C9CA5]">· {a.role}</span>
+                  <div key={a.member_id} className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)] px-5 py-3.5">
+                    <div className="text-[15px] text-[color:var(--pt-ink,#EDEDEF)]">
+                      {a.name ?? "Team member"} <span className="text-[color:var(--pt-ink3,#9C9CA5)]">· {a.role}</span>
                     </div>
                     <Btn disabled={busy !== null || !s.am_member} onClick={() => void change("add" + a.member_id, { add_member_ids: [a.member_id] }, "Proposed. They become a signer once enough signers approve.")}>
                       {busy === "add" + a.member_id ? "Proposing..." : "Add as signer"}

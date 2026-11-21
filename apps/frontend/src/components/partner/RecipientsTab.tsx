@@ -96,8 +96,8 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
         }
       >
         {importing && canImport && (
-          <div className="mb-8 space-y-4 rounded-2xl border border-white/10 bg-[#101012] p-6">
-            <p className="text-[15px] text-[#C9C9D0]">
+          <div className="mb-8 space-y-4 rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#101012)] p-6">
+            <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">
               One per line: an email, or a handle as twitter, discord, github or telegram, a colon and the handle. Add a name after a comma if you like.
             </p>
             <textarea className={`${inputCls} min-h-[150px] font-mono`} value={text} onChange={(e) => setText(e.target.value)} placeholder={"alice@example.com, Alice\ntwitter:bob, Bob"} />
@@ -110,9 +110,9 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
         )}
 
         {list === null ? (
-          <p className="text-[15px] text-[#C9C9D0]">Loading...</p>
+          <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>
         ) : !list.length ? (
-          <p className="text-[15px] text-[#C9C9D0]">No recipients yet. You can also pay anyone directly from the Payouts screen.</p>
+          <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No recipients yet. You can also pay anyone directly from the Payouts screen.</p>
         ) : (
           <Table cols={["Name", "Email / handle", "Via", "Paid", "Added"]} template={TEMPLATE}>
             {list.map((r) => {
@@ -123,14 +123,14 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
                 <Row key={r.id} template={TEMPLATE}>
                   <div className="flex min-w-0 items-center gap-3">
                     <Avatar name={name} />
-                    <span className="truncate font-medium text-[#EDEDEF]">{name}</span>
+                    <span className="truncate font-medium text-[color:var(--pt-ink,#EDEDEF)]">{name}</span>
                   </div>
-                  <span className="truncate font-mono text-[13.5px] text-[#C9C9D0]">{id}</span>
+                  <span className="truncate font-mono text-[13.5px] text-[color:var(--pt-ink2,#C9C9D0)]">{id}</span>
                   <span>
                     <Pill>{via}</Pill>
                   </span>
                   <span>{usd(r.paid_usd)}</span>
-                  <span className="text-[#C9C9D0]">{new Date(r.created_at).toLocaleDateString("en-US", { month: "short", day: "2-digit" })}</span>
+                  <span className="text-[color:var(--pt-ink2,#C9C9D0)]">{new Date(r.created_at).toLocaleDateString("en-US", { month: "short", day: "2-digit" })}</span>
                 </Row>
               );
             })}

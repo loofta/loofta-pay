@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, CodeBox, Notice, PageHeader, Section } from "./ui";
 import { post, usePartnerApi, type PartnerRole } from "./usePartnerApi";
+import { LOOFTA_PARTNER_PAYOUTS_SKILL } from "@/app/docs/skillContent";
 
 type Key = { id: string; prefix: string; created_at: string };
 
@@ -66,7 +67,7 @@ function WebhookSection({ orgId }: { orgId: string }) {
       {error && <div className="mb-4"><Notice kind="error">{error}</Notice></div>}
       <div className="flex flex-wrap items-center gap-3">
         <input
-          className="w-full max-w-xl rounded-[10px] border border-white/10 bg-[#0F0F11] px-3.5 py-[11px] text-[15px] text-[#EDEDEF] placeholder:text-[#85858F] focus:border-[#FF6A1F]/55 focus:outline-none"
+          className="w-full max-w-xl rounded-[10px] border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#0F0F11)] px-3.5 py-[11px] text-[15px] text-[color:var(--pt-ink,#EDEDEF)] placeholder:text-[color:var(--pt-ink4,#85858F)] focus:border-[#FF6A1F]/55 focus:outline-none"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://yourapp.com/loofta-webhook"
@@ -74,20 +75,20 @@ function WebhookSection({ orgId }: { orgId: string }) {
         />
         <Btn disabled={busy || !url.trim()} onClick={() => void save(url.trim())}>Save</Btn>
         {state?.url && <Btn kind="ghost" disabled={busy} onClick={() => void save(null)}>Turn off</Btn>}
-        {saved && <span className="text-[14px] text-[#9C9CA5]">Saved.</span>}
+        {saved && <span className="text-[14px] text-[color:var(--pt-ink3,#9C9CA5)]">Saved.</span>}
       </div>
       {state?.secret && (
-        <p className="mt-4 text-[14px] text-[#9C9CA5]">
-          Signing secret: <span className="break-all font-mono text-[#C9C9D0]">{state.secret}</span>. Check the <span className="font-mono text-[#C9C9D0]">X-Loofta-Signature</span> header with it before you trust a message.
+        <p className="mt-4 text-[14px] text-[color:var(--pt-ink3,#9C9CA5)]">
+          Signing secret: <span className="break-all font-mono text-[color:var(--pt-ink2,#C9C9D0)]">{state.secret}</span>. Check the <span className="font-mono text-[color:var(--pt-ink2,#C9C9D0)]">X-Loofta-Signature</span> header with it before you trust a message.
         </p>
       )}
       {state && state.recent.length > 0 && (
-        <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-[#101012]">
-          <div className="divide-y divide-white/10">
+        <div className="mt-6 overflow-hidden rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#101012)]">
+          <div className="divide-y divide-[color:var(--pt-w10,rgba(255,255,255,0.1))]">
             {state.recent.map((e) => (
               <div key={e.id} className="flex flex-wrap items-center justify-between gap-3 px-6 py-3.5 text-[15px]">
-                <span className="font-mono text-[#EDEDEF]">{e.event_type}</span>
-                <span className="text-[#9C9CA5]">
+                <span className="font-mono text-[color:var(--pt-ink,#EDEDEF)]">{e.event_type}</span>
+                <span className="text-[color:var(--pt-ink3,#9C9CA5)]">
                   {e.status === "delivered" ? "Delivered" : e.status === "failed" ? `Gave up: ${e.last_error ?? "no answer"}` : e.attempts ? `Retrying: ${e.last_error ?? ""}` : "Queued"}
                   {" · "}
                   {new Date(e.created_at).toLocaleString()}
@@ -207,13 +208,14 @@ const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-w
         }
       >
         {!allowed ? (
-          <p className="text-[15px] text-[#C9C9D0]">Only an owner or admin can manage API keys.</p>
+          <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Only an owner or admin can manage API keys.</p>
         ) : (
           <div className="space-y-5">
             {fresh && (
               <>
                 <Notice kind="ok">Copy this key now. It is shown once and we cannot show it again.</Notice>
                 <CodeBox
+                  plain
                   title="New API key"
                   value={fresh}
                   copied={copied}
@@ -227,15 +229,15 @@ const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-w
               </>
             )}
             {keys.length === 0 ? (
-              <p className="text-[15px] text-[#C9C9D0]">No keys yet.</p>
+              <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No keys yet.</p>
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#101012]">
-                <div className="divide-y divide-white/10">
+              <div className="overflow-hidden rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#101012)]">
+                <div className="divide-y divide-[color:var(--pt-w10,rgba(255,255,255,0.1))]">
                   {keys.map((k) => (
                     <div key={k.id} className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
                       <div>
-                        <div className="font-mono text-[15px] text-[#EDEDEF]">{k.prefix}...</div>
-                        <div className="text-[14px] text-[#9C9CA5]">Created {new Date(k.created_at).toLocaleDateString()}</div>
+                        <div className="font-mono text-[15px] text-[color:var(--pt-ink,#EDEDEF)]">{k.prefix}...</div>
+                        <div className="text-[14px] text-[color:var(--pt-ink3,#9C9CA5)]">Created {new Date(k.created_at).toLocaleDateString()}</div>
                       </div>
                       <Btn kind="danger" disabled={busy} onClick={() => void run(() => call(`${base}/${k.id}`, { method: "DELETE" }).then(() => undefined))}>
                         Revoke
@@ -284,6 +286,41 @@ const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-w
         <Snippet title="Or without React" code={html} />
         <p className="mt-6 text-[14px] text-[#9C9CA5]">Install with <span className="font-mono text-[#C9C9D0]">npm install @loofta/pay-sdk @loofta/portal</span>. Full guide in the developer docs.</p>
       </Section>
+    
+      <AgentSkillSection />
     </>
+  );
+}
+
+/** A ready-made skill for coding agents (Claude Code and similar): copy it into the project and the agent can wire up payouts. */
+function AgentSkillSection() {
+  const [copied, setCopied] = useState(false);
+  const [open, setOpen] = useState(false);
+  const copy = () => {
+    void navigator.clipboard.writeText(LOOFTA_PARTNER_PAYOUTS_SKILL).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <Section
+      title="Agent skill"
+      desc="Let your coding agent do the integration. Copy this skill into your project and ask the agent to add Loofta payouts: it knows the batch API, the webhooks and the earnings widget."
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <Btn onClick={copy}>{copied ? "Copied" : "Copy the skill"}</Btn>
+        <button type="button" onClick={() => setOpen((v) => !v)} className="text-[14px] font-semibold text-[#FF6A1F] hover:underline">
+          {open ? "Hide the skill" : "Read the skill"}
+        </button>
+      </div>
+      <p className="mt-4 text-[14px] text-[#9C9CA5]">
+        Save it as <span className="font-mono text-[#C9C9D0]">.claude/skills/loofta-partner-payouts/SKILL.md</span> in your project.
+      </p>
+      {open && (
+        <div className="mt-5">
+          <CodeBox plain title="SKILL.md" value={LOOFTA_PARTNER_PAYOUTS_SKILL} copied={copied} onCopy={copy} />
+        </div>
+      )}
+    </Section>
   );
 }

@@ -258,7 +258,7 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
               <Row key={i.row_index} template="minmax(0,1fr) 120px 200px">
                 <span className="truncate font-mono text-[13.5px]">{i.recipient_identifier}</span>
                 <span>{i.amount.toFixed(2)}</span>
-                <span className="text-[#C9C9D0]">{i.error ? i.error : i.withdrawn ? "Withdrawn" : i.status === "funded" ? "Funded" : i.status}</span>
+                <span className="text-[color:var(--pt-ink2,#C9C9D0)]">{i.error ? i.error : i.withdrawn ? "Withdrawn" : i.status === "funded" ? "Funded" : i.status}</span>
               </Row>
             ))}
           </Table>
@@ -276,7 +276,7 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
           )}
           <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
             {open.status === "pending_approval" && open.created_by_user_id === myUserId && (
-              <span className="mr-auto text-[14px] text-[#C9C9D0]">You created this batch, so another owner or admin has to approve it.</span>
+              <span className="mr-auto text-[14px] text-[color:var(--pt-ink2,#C9C9D0)]">You created this batch, so another owner or admin has to approve it.</span>
             )}
             <Btn kind="ghost" onClick={() => setOpen(null)}>
               Close
@@ -306,9 +306,9 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
       {!showBuilder && (
         <Section title="Payouts" desc="Ready to send first, then everything you have drafted or paid.">
           {!loaded ? (
-            <p className="text-[15px] text-[#C9C9D0]">Loading...</p>
+            <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>
           ) : !batches.length ? (
-            <p className="text-[15px] text-[#C9C9D0]">No payouts yet.</p>
+            <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No payouts yet.</p>
           ) : (
             <Table cols={["Batch", "Total", "Payouts", "Status"]} template="minmax(0,1fr) 140px 110px 190px">
               {[...batches]

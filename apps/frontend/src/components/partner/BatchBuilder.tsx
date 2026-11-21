@@ -112,8 +112,8 @@ function SavedPicker({ base, onAdd }: { base: string; onAdd: (rows: DraftRow[]) 
       return n;
     });
 
-  if (list === null) return <p className="text-[15px] text-[#C9C9D0]">Loading...</p>;
-  if (!usable.length) return <p className="text-[15px] text-[#C9C9D0]">No saved recipients yet. Import some under Recipients, or upload a file here.</p>;
+  if (list === null) return <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>;
+  if (!usable.length) return <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No saved recipients yet. Import some under Recipients, or upload a file here.</p>;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -125,12 +125,12 @@ function SavedPicker({ base, onAdd }: { base: string; onAdd: (rows: DraftRow[]) 
           Clear
         </Btn>
       </div>
-      <div className="max-h-72 overflow-auto rounded-[14px] border border-white/[0.08]">
+      <div className="max-h-72 overflow-auto rounded-[14px] border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))]">
         {shown.map((r) => (
-          <label key={r.id} className="flex cursor-pointer items-center gap-3 border-b border-white/[0.06] px-[18px] py-3 text-[15px] last:border-b-0 hover:bg-white/[0.02]">
+          <label key={r.id} className="flex cursor-pointer items-center gap-3 border-b border-[color:var(--pt-w0p06,rgba(255,255,255,0.06))] px-[18px] py-3 text-[15px] last:border-b-0 hover:bg-[color:var(--pt-w0p02,rgba(255,255,255,0.02))]">
             <input type="checkbox" checked={picked.has(r.id)} onChange={() => toggle(r.id)} className="h-4 w-4 accent-[#FF6A1F]" />
-            <span className="min-w-0 flex-1 truncate font-medium text-[#EDEDEF]">{r.display_name || label(r)}</span>
-            <span className="truncate font-mono text-[13.5px] text-[#B4B4BC]">{label(r)}</span>
+            <span className="min-w-0 flex-1 truncate font-medium text-[color:var(--pt-ink,#EDEDEF)]">{r.display_name || label(r)}</span>
+            <span className="truncate font-mono text-[13.5px] text-[color:var(--pt-ink2b,#B4B4BC)]">{label(r)}</span>
           </label>
         ))}
       </div>
@@ -255,10 +255,10 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
               role="button"
               tabIndex={0}
               onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && file.current?.click()}
-              className={`flex cursor-pointer flex-col items-center gap-2 rounded-[14px] border border-dashed px-6 py-10 text-center transition ${drag ? "border-[#FF6A1F] bg-[#FF6A1F]/[0.06]" : "border-white/[0.14] bg-[#0F0F11] hover:border-white/25"}`}
+              className={`flex cursor-pointer flex-col items-center gap-2 rounded-[14px] border border-dashed px-6 py-10 text-center transition ${drag ? "border-[#FF6A1F] bg-[#FF6A1F]/[0.06]" : "border-[color:var(--pt-w0p14,rgba(255,255,255,0.14))] bg-[color:var(--pt-surface2,#0F0F11)] hover:border-[color:var(--pt-w25,rgba(255,255,255,0.25))]"}`}
             >
-              <div className="text-[15px] font-semibold text-[#EDEDEF]">Drop a CSV file here, or click to choose one</div>
-              <div className="max-w-xl text-[14.5px] leading-[1.6] text-[#B4B4BC]">
+              <div className="text-[15px] font-semibold text-[color:var(--pt-ink,#EDEDEF)]">Drop a CSV file here, or click to choose one</div>
+              <div className="max-w-xl text-[14.5px] leading-[1.6] text-[color:var(--pt-ink2b,#B4B4BC)]">
                 One person per row: an email address, the amount in USDC (at least $1), and an optional note. A header row is fine, and the columns can be in any order if they are named email, amount and note.
               </div>
               <input ref={file} type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" className="hidden" onChange={(e) => (void readFile(e.target.files?.[0]), (e.target.value = ""))} />
@@ -300,7 +300,7 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
         {rows.length > 0 && (
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2.5 text-[15px] text-[#C9C9D0]">
+              <div className="flex flex-wrap items-center gap-2.5 text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">
                 <Pill tone="green" dot>
                   {good.length} ready
                 </Pill>
@@ -331,15 +331,15 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
                     <Row key={r.id} template="minmax(0,1.4fr) 120px minmax(0,1fr) minmax(0,1fr) 70px">
                       <span className="truncate font-mono text-[13.5px]">{r.type === "email" ? r.identifier : `${r.type}:${r.identifier}`}</span>
                       <input
-                        className="w-24 rounded-lg border border-white/10 bg-[#0F0F11] px-2.5 py-1.5 text-[14.5px] text-[#EDEDEF] focus:border-[#FF6A1F]/55 focus:outline-none"
+                        className="w-24 rounded-lg border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#0F0F11)] px-2.5 py-1.5 text-[14.5px] text-[color:var(--pt-ink,#EDEDEF)] focus:border-[#FF6A1F]/55 focus:outline-none"
                         inputMode="decimal"
                         value={Number.isFinite(r.amount) ? String(r.amount) : ""}
                         onChange={(e) => setRows((cur) => cur.map((x) => (x.id === r.id ? { ...x, amount: parseAmount(e.target.value) } : x)))}
                         aria-label="Amount"
                       />
-                      <span className="truncate text-[#B4B4BC]">{r.message ?? ""}</span>
-                      <span className={p ? "text-[#FF8A5C]" : "text-[#5FD49C]"}>{p ?? "Ready"}</span>
-                      <button type="button" onClick={() => setRows((cur) => cur.filter((x) => x.id !== r.id))} className="text-right text-[14px] text-[#B4B4BC] hover:text-[#EDEDEF]">
+                      <span className="truncate text-[color:var(--pt-ink2b,#B4B4BC)]">{r.message ?? ""}</span>
+                      <span className={p ? "text-[color:var(--pt-warn,#FF8A5C)]" : "text-[color:var(--pt-ok,#5FD49C)]"}>{p ?? "Ready"}</span>
+                      <button type="button" onClick={() => setRows((cur) => cur.filter((x) => x.id !== r.id))} className="text-right text-[14px] text-[color:var(--pt-ink2b,#B4B4BC)] hover:text-[color:var(--pt-ink,#EDEDEF)]">
                         Remove
                       </button>
                     </Row>
@@ -355,7 +355,7 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
               <input type="datetime-local" className={`${inputCls} max-w-xs`} value={runAt} onChange={(e) => setRunAt(e.target.value)} />
             </Field>
             <div className="flex flex-wrap items-center justify-between gap-4">
-              <p className="max-w-2xl text-[14.5px] leading-[1.6] text-[#B4B4BC]">
+              <p className="max-w-2xl text-[14.5px] leading-[1.6] text-[color:var(--pt-ink2b,#B4B4BC)]">
                 Network fees are added in USDC. Each recipient pays Loofta&apos;s withdrawal fee plus your fee when they cash out.
               </p>
               <Btn onClick={submit} disabled={busy || bad.length > 0 || !good.length}>

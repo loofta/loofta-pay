@@ -41,31 +41,35 @@ const GROUPS: Array<{ label: string; items: Array<{ key: NavKey; label: string; 
   },
 ];
 
-function OrgSwitcher({ orgs, current, onSelect }: { orgs: Org[]; current: Org; onSelect: (id: string) => void }) {
+function OrgSwitcher({ orgs, current, onSelect, onAdd }: { orgs: Org[]; current: Org; onSelect: (id: string) => void; onAdd?: () => void }) {
   const [open, setOpen] = useState(false);
+  const mark = (o: Org, size: number) =>
+    o.logo_url ? (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={o.logo_url} alt="" style={{ width: size, height: size }} className="rounded-[7px] object-cover" referrerPolicy="no-referrer" />
+    ) : (
+      <span style={{ width: size, height: size }} className="flex items-center justify-center rounded-[7px] bg-[#1D1D1F] text-[12px] font-semibold text-white">
+        {o.name.slice(0, 1).toUpperCase()}
+      </span>
+    );
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2.5 rounded-[10px] border border-white/[0.08] bg-white/[0.02] py-1.5 pl-1.5 pr-2.5 text-[#EDEDEF]"
+        className="flex items-center gap-2 rounded-xl py-[5px] pl-[5px] pr-2.5 text-[14px] text-[#1D1D1F] transition hover:bg-black/[0.05]"
       >
-        {current.logo_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={current.logo_url} alt="" className="h-6 w-6 rounded-[7px] object-cover" referrerPolicy="no-referrer" />
-        ) : (
-          <Avatar name={current.name} size={24} />
-        )}
-        <span className="max-w-[140px] truncate text-[14.5px] font-semibold">{current.name}</span>
-        <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 font-mono text-[11.5px] text-[#9C9CA5]">Partner</span>
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-          <path d="M3 4.5L6 7.5L9 4.5" stroke="#9C9CA5" strokeWidth="1.4" strokeLinecap="round" />
+        {mark(current, 24)}
+        <span className="max-w-[140px] truncate font-medium">{current.name}</span>
+        <span className="text-[12px] text-[#86868B]">Partner</span>
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden>
+          <path d="M3 4.5L6 7.5L9 4.5" stroke="#86868B" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-30 mt-2 min-w-[220px] rounded-xl border border-white/10 bg-[#141416] p-1.5 shadow-2xl">
+          <div className="absolute left-0 z-30 mt-2 min-w-[240px] rounded-2xl bg-white p-1.5 shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_24px_50px_-20px_rgba(40,25,15,0.3)]">
             {orgs.map((o) => (
               <button
                 key={o.org_id}
@@ -74,12 +78,25 @@ function OrgSwitcher({ orgs, current, onSelect }: { orgs: Org[]; current: Org; o
                   onSelect(o.org_id);
                   setOpen(false);
                 }}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14.5px] hover:bg-white/[0.06] ${o.org_id === current.org_id ? "text-[#EDEDEF]" : "text-[#C9C9D0]"}`}
+                className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[14px] hover:bg-black/[0.04] ${o.org_id === current.org_id ? "font-semibold text-[#1D1D1F]" : "text-[#4F4F57]"}`}
               >
-                <Avatar name={o.name} size={24} />
+                {mark(o, 24)}
                 <span className="truncate">{o.name}</span>
               </button>
             ))}
+            {onAdd && (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onAdd();
+                }}
+                className="mt-1 flex w-full items-center gap-2.5 rounded-xl border-t border-black/[0.06] px-2.5 pb-2 pt-3 text-left text-[14px] font-medium text-[#4F4F57] hover:text-[#1D1D1F]"
+              >
+                <span className="flex h-6 w-6 items-center justify-center rounded-[7px] border border-dashed border-black/20 text-[16px] leading-none">+</span>
+                Add a company
+              </button>
+            )}
           </div>
         </>
       )}
@@ -107,6 +124,7 @@ export function PartnerShell({
   username,
   email,
   centered,
+  onAddCompany,
   children,
 }: {
   orgs: Org[];
@@ -124,6 +142,8 @@ export function PartnerShell({
   email: string | undefined;
   /** Centre the content, for the public landing page. */
   centered?: boolean;
+  /** Shows "Add a company" in the company selector. */
+  onAddCompany?: () => void;
   children: ReactNode;
 }) {
   const showSidebar = signedIn && !!current;
@@ -131,86 +151,83 @@ export function PartnerShell({
 
   return (
     <div
-      className={`partner-root ${manrope.variable} ${jbMono.variable} flex min-h-[calc(100vh-var(--header-h,0px))] flex-col text-[#EDEDEF]`}
-      style={{ fontFamily: "var(--font-partner-sans), -apple-system, BlinkMacSystemFont, sans-serif", background: "radial-gradient(1100px 600px at 70% -200px,rgba(255,255,255,0.045),rgba(255,255,255,0) 70%),#09090A" }}
+      className={`partner-root pt-light ${manrope.variable} ${jbMono.variable} flex min-h-[calc(100vh-var(--header-h,0px))] flex-col text-[#1D1D1F]`}
+      style={{
+        fontFamily: "var(--font-partner-sans), -apple-system, BlinkMacSystemFont, sans-serif",
+        background: "radial-gradient(800px 500px at 95% -10%,rgba(255,196,170,0.28),rgba(255,196,170,0) 70%),#F5F5F7",
+      }}
     >
       <style>{`.partner-root .font-mono{font-family:var(--font-partner-mono),ui-monospace,monospace}.partner-root h1,.partner-root h2,.partner-root h3,.partner-root button,.partner-root input,.partner-root textarea,.partner-root select{font-family:inherit}`}</style>
-      <header className="flex items-center justify-between gap-4 px-[clamp(16px,3vw,40px)] py-[18px]">
+      <header className="sticky top-0 z-10 flex items-center justify-between gap-4 bg-[rgba(245,245,247,0.78)] px-5 py-3 backdrop-blur-[20px] [backdrop-filter:saturate(1.8)_blur(20px)]">
         <div className="flex min-w-0 items-center gap-4">
-          <LooftaPayLogoLink imageWidth={110} imageHeight={26} imageClassName="h-[26px] w-auto" />
+          <LooftaPayLogoLink imageWidth={110} imageHeight={26} imageClassName="h-[22px] w-auto" src="/loofta.svg" />
           {current && (
             <>
-              <span className="hidden h-[22px] w-px bg-white/[0.12] sm:block" />
+              <span className="hidden h-5 w-px bg-black/10 sm:block" />
               <div className="hidden sm:block">
-                <OrgSwitcher orgs={orgs} current={current} onSelect={onSelectOrg} />
+                <OrgSwitcher orgs={orgs} current={current} onSelect={onSelectOrg} onAdd={onAddCompany} />
               </div>
             </>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-5">
-          <a href="/docs" className="hidden text-[14.5px] text-[#C9C9D0] transition hover:text-[#EDEDEF] sm:inline">
+          <a href="/docs" className="hidden text-[14px] text-[#6E6E73] transition hover:text-[#1D1D1F] sm:inline">
             Docs
           </a>
-          <a href="mailto:hello@loofta.xyz" className="hidden text-[14.5px] text-[#C9C9D0] transition hover:text-[#EDEDEF] sm:inline">
+          <a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="hidden text-[14px] text-[#6E6E73] transition hover:text-[#1D1D1F] sm:inline">
             Support
           </a>
           {!authReady ? null : signedIn ? (
-            <UserMenu username={username} email={email} isDarkPage={true} onLogout={onLogout} />
+            <UserMenu username={username} email={email} isDarkPage={false} onLogout={onLogout} />
           ) : (
-            <button type="button" onClick={onSignIn} className="text-[14.5px] font-medium text-[#EDEDEF] transition hover:text-white">
+            <button type="button" onClick={onSignIn} className="rounded-full bg-white px-4 py-1.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_0_0_1px_rgba(0,0,0,0.06)] transition hover:bg-[#F2F2F4]">
               Sign in
             </button>
           )}
         </div>
       </header>
 
-      <div className="mx-[clamp(8px,2vw,28px)] flex min-w-0 flex-1 rounded-[22px] border border-white/[0.07] bg-[rgba(14,14,16,0.7)]">
+      <div className="flex min-w-0 flex-1 gap-0 px-3 pb-3">
         {showSidebar && current && (
-          <aside className="sticky top-0 hidden h-[calc(100vh-var(--header-h,0px))] w-[236px] shrink-0 flex-col gap-7 self-start overflow-y-auto border-r border-white/[0.06] py-9 pl-6 pr-5 lg:flex">
-            <div className="flex items-center gap-2 px-2.5">
-              <span className="text-[14.5px] font-semibold">Partner portal</span>
-              <span className="rounded-md bg-white/[0.06] px-[7px] py-0.5 font-mono text-[11.5px] text-[#C9C9D0]">Payouts</span>
-            </div>
-
-            {GROUPS.map((g) => (
-              <div key={g.label} className="flex flex-col gap-0.5">
-                <div className="px-2.5 pb-2 font-mono text-[11.5px] uppercase tracking-[0.12em] text-[#8E8E98]">{g.label}</div>
-                {g.items.map((it) => {
-                  const on = tab === it.key;
-                  const n = it.count && counts ? counts[it.count] : null;
-                  return (
-                    <button
-                      key={it.key}
-                      type="button"
-                      onClick={() => onTab(it.key)}
-                      className={`flex items-center justify-between gap-2 rounded-[9px] px-2.5 py-[9px] text-left text-[15px] transition hover:bg-white/[0.05] hover:text-[#EDEDEF] ${on ? "bg-white/[0.07] font-semibold text-[#EDEDEF]" : "font-medium text-[#C9C9D0]"}`}
-                    >
-                      <span>{it.label}</span>
-                      {n !== null && n > 0 && <span className="font-mono text-[11.5px] text-[#9C9CA5]">{n}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-
-            <div className="mt-auto flex flex-col gap-3.5">
-              <button
-                type="button"
-                onClick={() => onTab("wallet")}
-                className="flex flex-col gap-1.5 rounded-xl border border-white/[0.07] bg-[#121214] p-3.5 text-left"
-              >
-                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[#9C9CA5]">Company wallet</div>
-                <div className="text-[22.5px] font-semibold">
-                  {bal} <span className="text-[13.5px] font-medium text-[#C9C9D0]">USDC</span>
+          <aside className="sticky top-[60px] hidden h-[calc(100vh-84px)] w-[clamp(176px,18vw,232px)] shrink-0 flex-col justify-between gap-6 self-start overflow-y-auto px-3 py-5 lg:flex">
+            <div className="flex flex-col gap-[22px]">
+              <div className="px-2.5 text-[13px] font-semibold text-[#86868B]">Partner portal</div>
+              {GROUPS.map((g) => (
+                <div key={g.label} className="flex flex-col gap-0.5">
+                  <div className="px-2.5 pb-1.5 text-[11px] font-semibold tracking-[0.02em] text-[#AEAEB2]">{g.label}</div>
+                  {g.items.map((it) => {
+                    const on = tab === it.key;
+                    const n = it.count && counts ? counts[it.count] : null;
+                    return (
+                      <button
+                        key={it.key}
+                        type="button"
+                        onClick={() => onTab(it.key)}
+                        className={`flex items-center justify-between gap-2 rounded-[9px] px-2.5 py-[7px] text-left text-[14px] text-[#1D1D1F] transition hover:bg-black/[0.04] ${on ? "bg-white font-semibold shadow-[0_0_0_1px_rgba(0,0,0,0.05),0_1px_3px_rgba(0,0,0,0.05)]" : "font-normal"}`}
+                      >
+                        <span>{it.label}</span>
+                        {n !== null && n > 0 && <span className="text-[12px] text-[#86868B]">{n}</span>}
+                      </button>
+                    );
+                  })}
                 </div>
-                <div className="text-[13px] text-[#B4B4BC]">Network fees paid in USDC</div>
-              </button>
+              ))}
             </div>
+            <button
+              type="button"
+              onClick={() => onTab("wallet")}
+              className="flex flex-col gap-1 rounded-[14px] bg-white p-3.5 text-left shadow-[0_0_0_1px_rgba(0,0,0,0.04)] transition hover:shadow-[0_0_0_1px_rgba(0,0,0,0.08)]"
+            >
+              <div className="text-[12px] text-[#86868B]">Company wallet</div>
+              <div className="text-[15px] font-semibold text-[#1D1D1F]">
+                {bal} <span className="text-[12px] font-medium text-[#86868B]">USDC</span>
+              </div>
+            </button>
           </aside>
         )}
 
-        <main className="min-w-0 flex-1 px-[clamp(18px,4vw,56px)] pb-16 pt-[clamp(24px,4vw,48px)]">
-          <div className={`flex max-w-[960px] flex-col ${centered ? "mx-auto" : ""}`}>
+        <main className="min-w-0 flex-1 rounded-[22px] bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.04),0_20px_50px_-30px_rgba(40,25,15,0.15)]">
+          <div className={`flex w-full max-w-[1000px] flex-col px-[clamp(20px,4vw,56px)] pb-[72px] pt-[clamp(28px,4vw,56px)] mx-auto`}>
             {showSidebar && (
               <div className="mb-6 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
                 {GROUPS.flatMap((g) => g.items).map((it) => (
@@ -218,7 +235,7 @@ export function PartnerShell({
                     key={it.key}
                     type="button"
                     onClick={() => onTab(it.key)}
-                    className={`shrink-0 rounded-[9px] border border-white/[0.08] px-3 py-2 text-[14px] ${tab === it.key ? "bg-white/[0.07] font-semibold text-[#EDEDEF]" : "text-[#C9C9D0]"}`}
+                    className={`shrink-0 rounded-full px-3.5 py-2 text-[14px] ${tab === it.key ? "bg-[#1D1D1F] font-semibold text-white" : "bg-[#F2F2F4] text-[#4F4F57]"}`}
                   >
                     {it.label}
                   </button>
@@ -230,22 +247,14 @@ export function PartnerShell({
         </main>
       </div>
 
-      <footer className="flex flex-wrap justify-between gap-4 px-[clamp(16px,3vw,40px)] py-[18px] text-[13.5px] text-[#8E8E98]">
+      <footer className="flex flex-wrap justify-between gap-4 px-5 py-4 text-[13px] text-[#86868B]">
         <div className="flex gap-5">
-          <a href="/terms" className="hover:text-[#C9C9D0]">
-            Terms
-          </a>
-          <a href="/privacy" className="hover:text-[#C9C9D0]">
-            Privacy
-          </a>
+          <a href="/terms" className="hover:text-[#1D1D1F]">Terms</a>
+          <a href="/privacy" className="hover:text-[#1D1D1F]">Privacy</a>
         </div>
         <div className="flex gap-5">
-          <a href="/docs" className="hover:text-[#C9C9D0]">
-            Docs
-          </a>
-          <a href="mailto:hello@loofta.xyz" className="hover:text-[#C9C9D0]">
-            Support
-          </a>
+          <a href="/docs" className="hover:text-[#1D1D1F]">Docs</a>
+          <a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="hover:text-[#1D1D1F]">Support</a>
         </div>
       </footer>
     </div>
