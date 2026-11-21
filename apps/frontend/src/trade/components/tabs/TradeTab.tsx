@@ -348,7 +348,7 @@ export function TradeTab({ onOpen, paused = false, openPrediction = null }: { on
       {preInfo && (
         <Sheet title="What is Pre-IPO?" onClose={() => setPreInfo(false)}>
           <div className="mt-3 space-y-3 text-base leading-snug text-mute">
-            <p>These tokens give you exposure to companies that are not listed on a stock market yet, like Anthropic or OpenAI.</p>
+            <p>These tokens give you exposure to companies that are not listed on a stock market yet, like OpenAI or SpaceX.</p>
             <p>They are not the company's shares. You do not own part of the company.</p>
             <p>The price is set only by traders and can move a lot.</p>
           </div>

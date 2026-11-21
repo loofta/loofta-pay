@@ -69,7 +69,7 @@ const FAMILIES: Array<{ name: string; kind: StockToken["kind"]; pattern: RegExp;
     name: "PreStocks",
     kind: "prestock",
     pattern: /PreStocks?/i,
-    seeds: ["Anthropic", "OpenAI", "SpaceX", "Polymarket", "Neuralink", "Anduril", "Kalshi", "Figure AI", "xAI", "Stripe", "Databricks", "Ramp", "Perplexity", "Scale AI", "Cerebras", "Discord", "Canva", "Revolut", "Shein", "ByteDance", "Epic Games", "Waymo", "Ripple", "Kraken", "Plaid", "Chime", "Klarna", "Mistral", "Safe Superintelligence", "Thinking Machines", "Cursor", "Hyperliquid", "Starlink", "Boring Company"],
+    seeds: ["OpenAI", "SpaceX", "Polymarket", "Neuralink", "Anduril", "Kalshi", "Figure AI", "xAI", "Stripe", "Databricks", "Ramp", "Perplexity", "Scale AI", "Cerebras", "Discord", "Canva", "Revolut", "Shein", "ByteDance", "Epic Games", "Waymo", "Ripple", "Kraken", "Plaid", "Chime", "Klarna", "Mistral", "Safe Superintelligence", "Thinking Machines", "Cursor", "Hyperliquid", "Starlink", "Boring Company"],
   },
   {
     name: "Ondo Tokenized",
@@ -82,7 +82,9 @@ const FAMILY_TTL = 12 * 3_600_000;
 /** Official PreStocks mints (the real ones all start with "Pre"), found with the name search. Only a head start: the search still runs and adds new ones, and tokens with no liquidity are dropped. */
 const SEED_PRESTOCKS = ["Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP", "Pre9atBqkocK1QngFy7Q7zvyQictEFpXdLi6bZ2qnYy", "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh", "PreC1KtJ1sBPPqaeeqL6Qb15GTLCYVvyYEwxhdfTwfx", "PreGJxNkwFp8KmtA5rnvgv2z3zAa8c2UQMfN4FjPh4Z", "PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua", "PreZad18qfPtbxNpMtMuAuX2zVpvkEU8DnJx56faCWd", "Preb5VKsmKgMGhMKUhDpe7A2AhMDmrZtMMZmvFEhLbU", "PrekqLJvJ3qVdXmBGDiexvwUTF4rLFDa6HWS4HJbw9S", "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw", "Pres43hQWdY6HaHWckmgzqyQgVwYCXen3VPrXMoKWeY", "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB", "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF"];
 /** Bump when the rules for what counts as a stock change, so a list built under the old rules is rebuilt. */
-const LIST_VERSION = 3;
+const LIST_VERSION = 4;
+/** Companies that have IPO'd. Their PreStocks token may still trade on Jupiter, but they are no longer pre-IPO, so hide them. Add a name here when a company lists. */
+const LISTED_COMPANIES = /^(Anthropic)\b/i;
 
 const g = globalThis as unknown as { __stocks?: { catalog: { at: number; mints: string[] } | null;
     families: { at: number; kinds: Map<string, StockToken["kind"]> } | null;
@@ -201,6 +203,7 @@ async function build(): Promise<StockToken[]> {
     const kind = kindOf.get(t.id)!;
     if (kind !== "xstock" && !BACKPACK_MINTS.includes(t.id) && !t.isVerified) continue;
     if (kind === "prestock" && !t.id.startsWith("Pre")) continue;
+    if (kind === "prestock" && LISTED_COMPANIES.test(t.name.trim())) continue;
     if (!(t.usdPrice && t.usdPrice > 0)) continue;
     seen.add(t.id);
     items.push({

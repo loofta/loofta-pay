@@ -51,7 +51,7 @@ export function LiveChart({ mint, trades, price }: { mint: string; trades: LiveT
   const liveBar = useRef<Candle | null>(null);
   const seen = useRef<string | null>(null);
   const fitted = useRef(-1);
-  const [tf, setTf] = useState<Frame>("1m");
+  const [tf, setTf] = useState<Frame>("1h");
   const [candlesOn, setCandlesOn] = useState(true);
   const [fetched, setFetched] = useState<Candle[] | null>(null);
   const [built, setBuilt] = useState(0);

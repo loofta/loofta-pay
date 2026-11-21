@@ -63,64 +63,6 @@ function CreateOrg({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-function Landing({
-  inviteToken,
-  onSignIn,
-  signedInAs,
-  onStart,
-  onSwitch,
-}: {
-  inviteToken: string | null;
-  onSignIn: () => void;
-  /** Set when someone is already signed in but has no partner account yet. */
-  signedInAs?: string | null;
-  onStart?: () => void;
-  onSwitch?: () => void;
-}) {
-  return (
-    <>
-      <PageHeader
-        crumb="Partner portal"
-        title="Pay your people. Earn when they cash out."
-        blurb="Pay creators, partners or affiliates in bulk. They claim from a page with your name and logo, and you add your own fee on top."
-        actions={
-          <>
-            {onStart ? (
-              <>
-                <Btn onClick={onStart}>Create partner account</Btn>
-                <a href="/partner-tutorial" className="text-[14px] font-semibold text-[#C9C9D0] hover:text-white">Watch the tutorial</a>
-                <button type="button" onClick={onSwitch} className="text-[14px] font-semibold text-[#FF6A1F] hover:underline">
-                  Use a different email
-                </button>
-              </>
-            ) : (
-              <>
-                <Btn onClick={onSignIn}>Sign in</Btn>
-                <span className="text-[14px] text-[#9C9CA5]">
-                  {inviteToken ? "Sign in with the email you were invited at to join the team." : "Sign in with your email. We send you a code."}
-                </span>
-              </>
-            )}
-          </>
-        }
-      />
-      <div className="grid gap-4 sm:grid-cols-3">
-        {[
-          ["Step 1", "Pay in bulk", "Upload or paste a list of emails with amounts and pay them all at once."],
-          ["Step 2", "They claim on your page", "Recipients get an email with your name and logo, sign in with that address and withdraw from your page."],
-          ["Step 3", "You earn a fee", "Add a flat or percent fee on top of Loofta's own, sent straight to your wallet."],
-        ].map(([n, title, body]) => (
-          <div key={n} className="rounded-2xl border border-white/10 bg-[#111113] p-6">
-            <div className="font-mono text-[11.5px] uppercase tracking-[0.12em] text-[#9C9CA5]">{n}</div>
-            <div className="mt-3 text-[20.5px] font-semibold tracking-tight text-[#EDEDEF]">{title}</div>
-            <p className="mt-2 text-[15px] leading-7 text-[#C9C9D0]">{body}</p>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
 function PartnerContent() {
   const params = useSearchParams();
   const inviteToken = params.get("invite");
@@ -137,8 +79,15 @@ function PartnerContent() {
   const [counts, setCounts] = useState<Counts | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [started, setStarted] = useState(false);
   const acceptedRef = useRef(false);
+  const autoLoginRef = useRef(false);
+
+  // Nobody lands on a marketing page here: not signed in means the sign-in opens straight away.
+  useEffect(() => {
+    if (!ready || authenticated || autoLoginRef.current) return;
+    autoLoginRef.current = true;
+    emailLogin();
+  }, [ready, authenticated, emailLogin]);
 
   const loadOrgs = useCallback(async () => {
     try {
@@ -218,15 +167,18 @@ function PartnerContent() {
       {!ready ? (
         <p className="text-[15px] text-[#C9C9D0]">Loading...</p>
       ) : !authenticated ? (
-        <Landing inviteToken={inviteToken} onSignIn={emailLogin} />
+        <div className="max-w-md">
+          <p className="text-[17px] text-[#C9C9D0]">
+            {inviteToken ? "Sign in with the email you were invited at to join the team." : "Sign in with your email to open your partner portal. We send you a code."}
+          </p>
+          <div className="mt-5">
+            <Btn onClick={emailLogin}>Sign in</Btn>
+          </div>
+        </div>
       ) : orgs === null ? (
         <p className="text-[15px] text-[#C9C9D0]">Loading...</p>
       ) : orgs.length === 0 ? (
-        started ? (
-          <CreateOrg onCreated={() => void loadOrgs()} />
-        ) : (
-          <Landing inviteToken={inviteToken} onSignIn={emailLogin} signedInAs={email} onStart={() => setStarted(true)} onSwitch={() => void logout()} />
-        )
+        <CreateOrg onCreated={() => void loadOrgs()} />
       ) : (
         current && (
           <>
