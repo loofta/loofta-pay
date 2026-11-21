@@ -1,6 +1,6 @@
 import { permanentRedirect } from "next/navigation";
 
-// /partners is the one canonical business page; /business just points to it.
+// /partner on pay.loofta.com is the one business page; /business just points to it.
 export default function Page() {
-  permanentRedirect("/partners");
+  permanentRedirect("https://pay.loofta.com/partner");
 }

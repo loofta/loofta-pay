@@ -141,7 +141,7 @@ function Header() {
     { label: "Privacy", href: "#privacy" },
     { label: "Giveaways", href: "#giveaways" },
     { label: "Rewards", href: "#rewards" },
-    { label: "Business", href: "#business" },
+    { label: "Business", href: "https://pay.loofta.com/partner" },
   ];
 
   return (

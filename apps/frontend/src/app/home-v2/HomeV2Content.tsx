@@ -94,7 +94,7 @@ function Header() {
     { label: "Claim", href: "#claim" },
     { label: "Privacy", href: "#privacy" },
     { label: "Rewards", href: "#rewards" },
-    { label: "Business", href: "#business" },
+    { label: "Business", href: "https://pay.loofta.com/partner" },
   ];
 
   return (
