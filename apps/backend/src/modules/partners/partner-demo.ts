@@ -12,7 +12,7 @@ export const DEMO_ORG_ID = 'demo';
 
 export const DEMO_PARTNER: PublicPartner = {
   org_id: DEMO_ORG_ID,
-  name: 'Demo store',
+  name: 'Acme',
   description: 'Demo campaign. Nothing on this page moves real money.',
   // A test logo, so the sample page always shows one. A link can pick one of the demo store's sample logos instead.
   logo_url: 'https://pay.loofta.com/demo-store-logo.svg',

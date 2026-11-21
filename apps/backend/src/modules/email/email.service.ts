@@ -104,6 +104,41 @@ export class EmailService {
     }
   }
 
+  /**
+   * Tells someone they were invited to a company's partner portal, with the one-time link to accept. Best-effort: a failed
+   * email never fails the invite, the inviter can still copy the link. Only a person who logs in with this very email
+   * address can accept, so the link is useless to anyone else who sees it.
+   */
+  async sendPartnerInviteEmail(data: { to: string; partnerName: string; role: string; acceptUrl: string }): Promise<boolean> {
+    if (!this.resend) return false;
+    const name = data.partnerName.replace(/[\r\n<>"]/g, ' ').trim().slice(0, 80) || 'A company';
+    const role = ({ owner: 'an owner', admin: 'an admin', payer: 'a payer', viewer: 'a viewer' } as Record<string, string>)[data.role] ?? 'a team member';
+    const url = escapeHtml(data.acceptUrl);
+    const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>You were invited</title></head>
+<body style="margin:0;padding:0;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f7;padding:40px 16px;"><tr><td align="center">
+    <table width="100%" style="max-width:480px;background:#ffffff;border-radius:18px;padding:32px;">
+      <tr><td>
+        <p style="margin:0 0 6px;font-size:13px;color:#86868b;">Loofta partner portal</p>
+        <h1 style="margin:0 0 12px;font-size:24px;line-height:1.2;color:#1d1d1f;">${escapeHtml(name)} invited you</h1>
+        <p style="margin:0 0 24px;font-size:16px;line-height:1.55;color:#515154;">You were added to ${escapeHtml(name)} as ${role}. Sign in with this email address to accept. The link works for 7 days.</p>
+        <a href="${url}" style="display:inline-block;background:#ff4a1c;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:13px 26px;border-radius:999px;">Accept the invite</a>
+        <p style="margin:24px 0 0;font-size:13px;line-height:1.5;color:#86868b;">If you were not expecting this, you can ignore the email. Nothing happens unless you sign in.</p>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+    try {
+      await this.resend.emails.send({ from: `Loofta <${this.fromEmail}>`, to: data.to, subject: `${name} invited you to their Loofta partner portal`, html });
+      this.logger.log('Partner invite email sent');
+      return true;
+    } catch (err: any) {
+      this.logger.error(`Failed to send partner invite email: ${err?.message ?? err}`);
+      return false;
+    }
+  }
+
   private buildPartnerPayoutHtml(data: PartnerPayoutEmailData & { amountStr: string }): string {
     const name = escapeHtml(data.partnerName);
     const logo = data.partnerLogoUrl && /^https:\/\//i.test(data.partnerLogoUrl)

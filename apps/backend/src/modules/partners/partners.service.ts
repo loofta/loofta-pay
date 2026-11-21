@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { PublicKey } from '@solana/web3.js';
@@ -10,6 +10,7 @@ import { assertSafePublicUrl } from '@/common/assert-safe-public-url';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
+import { EmailService } from '@/modules/email/email.service';
 import { CreatePartnerDto, RecipientInputDto, UpdatePartnerDto, UpdatePartnerSettingsDto } from './dto/partner.dto';
 import { MAX_PARTNER_FEE_SHARE, computePartnerFeeUsdc } from './partner-fee';
 import { DEMO_ORG_ID, DEMO_PARTNER } from './partner-demo';
@@ -72,6 +73,9 @@ export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const FEE_WALLET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 export { MAX_PARTNER_FEE_SHARE, computePartnerFeeUsdc };
 
+/** Escapes % and _ so a user-supplied value is matched literally by ilike (a handle like john_doe must not match johnXdoe). */
+const ilikeLiteral = (v: string) => v.replace(/[\\%_]/g, (m) => `\\${m}`);
+
 const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');
 
 /** How many companies one person can own. */
@@ -86,6 +90,7 @@ export class PartnersService {
     private readonly users: UsersService,
     private readonly config: ConfigService,
     private readonly sponsor: SolanaSponsorService,
+    @Optional() private readonly email?: EmailService,
   ) {}
 
   /**
@@ -399,7 +404,7 @@ export class PartnersService {
     const { data: already } = await this.supabase.partnerMembers
       .select('id, status, user_id')
       .eq('partner_id', partner.id)
-      .ilike('email', normalized)
+      .eq('email', normalized)
       .in('status', ['active', 'invited'])
       .maybeSingle();
     if (already) throw new ConflictException('That email is already on the team or has a pending invite.');
@@ -414,7 +419,10 @@ export class PartnersService {
       .single();
     if (error || !data) throw new BadRequestException('Could not create the invite.');
     await this.audit(partner.id, userId, 'member.invited', { type: 'member', id: data.id }, { email: normalized, role });
-    return { member_id: data.id, token, expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString() };
+    // Email the link too, so nobody has to copy and paste it. A failed send never fails the invite (the link is still returned).
+    const base = (this.config.get<string>('PAY_APP_URL') || 'https://pay.loofta.com').replace(/\/$/, '');
+    const emailSent = (await this.email?.sendPartnerInviteEmail({ to: normalized, partnerName: partner.name, role, acceptUrl: `${base}/partner/portal?invite=${encodeURIComponent(token)}` }).catch(() => false)) ?? false;
+    return { member_id: data.id, token, expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(), email_sent: emailSent };
   }
 
   /** Invitee accepts. Identity comes from the verified login, never from the request. */
@@ -537,43 +545,55 @@ export class PartnersService {
     };
   }
 
-  /** Create or update recipients. A bad row is reported and skipped; it never fails the whole import. */
-  async importRecipients(orgId: string, userId: string, rows: RecipientInputDto[]) {
-    const { partner } = await this.requireMembership(orgId, userId, 'recipients.manage');
+  /**
+   * Creates or updates recipients for one partner and returns the id of every row that worked. A bad row is reported and
+   * skipped, it never fails the whole list. Shared by the import and by recipient groups, so both read rows the same way.
+   */
+  async upsertRecipientRows(partnerId: string, rows: RecipientInputDto[]) {
     let created = 0;
     let updated = 0;
+    const ids: string[] = [];
     const errors: Array<{ row: number; error: string }> = [];
     for (let i = 0; i < rows.length; i++) {
       try {
         const n = this.normalize(rows[i]);
         let existingId: string | undefined;
         if (n.external_user_id) {
-          const { data } = await this.supabase.partnerRecipients.select('id').eq('partner_id', partner.id).eq('external_user_id', n.external_user_id).maybeSingle();
+          const { data } = await this.supabase.partnerRecipients.select('id').eq('partner_id', partnerId).eq('external_user_id', n.external_user_id).maybeSingle();
           existingId = data?.id;
         }
         if (!existingId && n.email) {
-          const { data } = await this.supabase.partnerRecipients.select('id').eq('partner_id', partner.id).ilike('email', n.email).maybeSingle();
+          const { data } = await this.supabase.partnerRecipients.select('id').eq('partner_id', partnerId).ilike('email', ilikeLiteral(n.email)).maybeSingle();
           existingId = data?.id;
         }
         if (!existingId && n.handle) {
-          const { data } = await this.supabase.partnerRecipients.select('id').eq('partner_id', partner.id).eq('handle_platform', n.handle_platform).ilike('handle', n.handle).maybeSingle();
+          const { data } = await this.supabase.partnerRecipients.select('id').eq('partner_id', partnerId).eq('handle_platform', n.handle_platform).ilike('handle', ilikeLiteral(n.handle)).maybeSingle();
           existingId = data?.id;
         }
         if (existingId) {
           // Scoped to this partner even though existingId came from a partner-scoped query.
-          await this.supabase.partnerRecipients.update(n).eq('id', existingId).eq('partner_id', partner.id);
+          await this.supabase.partnerRecipients.update(n).eq('id', existingId).eq('partner_id', partnerId);
+          ids.push(existingId);
           updated++;
         } else {
-          const { error } = await this.supabase.partnerRecipients.insert({ ...n, partner_id: partner.id });
-          if (error) throw new Error('could not save');
+          const { data, error } = await this.supabase.partnerRecipients.insert({ ...n, partner_id: partnerId }).select('id').single();
+          if (error || !data) throw new Error('could not save');
+          ids.push(data.id as string);
           created++;
         }
       } catch (e) {
         errors.push({ row: i, error: (e as Error).message });
       }
     }
-    await this.audit(partner.id, userId, 'recipients.imported', undefined, { created, updated, failed: errors.length });
-    return { created, updated, failed: errors.length, errors };
+    return { created, updated, ids, errors };
+  }
+
+  /** Create or update recipients (the portal import and the API). */
+  async importRecipients(orgId: string, userId: string, rows: RecipientInputDto[]) {
+    const { partner } = await this.requireMembership(orgId, userId, 'recipients.manage');
+    const r = await this.upsertRecipientRows(partner.id, rows);
+    await this.audit(partner.id, userId, 'recipients.imported', undefined, { created: r.created, updated: r.updated, failed: r.errors.length });
+    return { created: r.created, updated: r.updated, failed: r.errors.length, errors: r.errors };
   }
 
   async listRecipients(orgId: string, userId: string, limit = 200, offset = 0) {

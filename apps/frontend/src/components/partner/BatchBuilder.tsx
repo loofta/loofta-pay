@@ -10,7 +10,7 @@ const MAX_AMOUNT = 10000;
 const MAX_FILE_BYTES = 1_000_000;
 
 export type DraftRow = { id: string; type: string; identifier: string; amount: number; message?: string };
-type Source = "upload" | "paste" | "saved";
+type Source = "upload" | "paste" | "saved" | "group";
 type Saved = { id: string; display_name: string | null; email: string | null; handle_platform: string | null; handle: string | null };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -90,6 +90,60 @@ export function rowsFromText(text: string): DraftRow[] {
 
 const keyOf = (r: DraftRow) => `${r.type}:${r.identifier.toLowerCase()}`;
 const TEMPLATE = "email,amount,note\nalice@example.com,25,October bonus\nbob@example.com,40,\n";
+
+/** Adds everyone in one of your recipient groups, each with the same amount. */
+function GroupPicker({ base, onAdd }: { base: string; onAdd: (rows: DraftRow[]) => void }) {
+  const call = usePartnerApi();
+  const [groups, setGroups] = useState<Array<{ id: string; name: string; member_count: number }> | null>(null);
+  const [id, setId] = useState("");
+  const [amount, setAmount] = useState("25");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    call<{ groups: Array<{ id: string; name: string; member_count: number }> }>(`${base}/groups`).then((r) => setGroups(r.groups ?? [])).catch(() => setGroups([]));
+  }, [call, base]);
+  if (groups === null) return <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>;
+  if (!groups.length) return <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No groups yet. Create one under Recipients, or link a URL that returns your list.</p>;
+  return (
+    <div className="flex flex-col gap-4">
+      {error && <p className="m-0 text-[14px] text-[#D8481A]">{error}</p>}
+      <div className="flex flex-wrap items-end gap-4">
+        <Field label="Group">
+          <select className={`${inputCls} min-w-[220px]`} value={id} onChange={(e) => setId(e.target.value)}>
+            <option value="">Choose a group</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>{g.name} ({g.member_count})</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Amount for each (USDC)">
+          <input className={`${inputCls} w-40`} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <Btn
+          disabled={busy || !id || !(parseAmount(amount) >= MIN_AMOUNT)}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              const r = await call<{ recipients: Saved[] }>(`${base}/groups/${id}/members`);
+              const withEmail = (r.recipients ?? []).filter((x) => x.email);
+              const skipped = (r.recipients ?? []).length - withEmail.length;
+              if (!withEmail.length) return setError("Nobody in this group has an email address. Batches pay people by email.");
+              onAdd(withEmail.map((x) => toRow(x.email as string, String(parseAmount(amount)), "")));
+              if (skipped) setError(`${skipped} ${skipped === 1 ? "person has" : "people have"} no email and was left out.`);
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Adding..." : "Add everyone in the group"}
+        </Btn>
+      </div>
+    </div>
+  );
+}
 
 function SavedPicker({ base, onAdd }: { base: string; onAdd: (rows: DraftRow[]) => void }) {
   const call = usePartnerApi();
@@ -238,7 +292,7 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
     <Section
       title="New batch"
       desc="Bring a list of people and amounts. Every row is checked before anything is saved."
-      right={<Segmented<Source> value={source} onChange={setSource} options={[{ value: "upload", label: "Upload file" }, { value: "paste", label: "Paste" }, { value: "saved", label: "Saved recipients" }]} />}
+      right={<Segmented<Source> value={source} onChange={setSource} options={[{ value: "upload", label: "Upload file" }, { value: "paste", label: "Paste" }, { value: "saved", label: "Saved recipients" }, { value: "group", label: "From a group" }]} />}
     >
       <div className="flex flex-col gap-6">
         {source === "upload" && (
@@ -294,6 +348,7 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
         )}
 
         {source === "saved" && <SavedPicker base={base} onAdd={add} />}
+        {source === "group" && <GroupPicker base={base} onAdd={add} />}
 
         {notice && <Notice kind="info">{notice}</Notice>}
 

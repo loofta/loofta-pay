@@ -179,6 +179,14 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('partner_recipients');
   }
 
+  get partnerRecipientGroups() {
+    return this.client.from('partner_recipient_groups');
+  }
+
+  get partnerRecipientGroupMembers() {
+    return this.client.from('partner_recipient_group_members');
+  }
+
   get payoutWebhookEvents() {
     return this.client.from('payout_webhook_events');
   }

@@ -283,9 +283,9 @@ function ClaimCard() {
     <div className="pl-float relative w-full max-w-[430px] overflow-hidden rounded-[30px] border border-black/[0.06] bg-white p-6 text-[#1D1D1F] shadow-[0_50px_90px_-30px_rgba(255,90,30,0.35),0_30px_60px_-30px_rgba(40,25,15,0.25)]">
       <div className="pl-sheen" aria-hidden />
       <div className="flex items-center gap-3.5">
-        <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#FF1301] to-[#EAB308] text-lg font-bold text-white">R</span>
+        <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#FF1301] to-[#EAB308] text-lg font-bold text-white">A</span>
         <div className="min-w-0">
-          <p className="text-[15px] text-[#86868B]">Rally sent you</p>
+          <p className="text-[15px] text-[#86868B]">Acme sent you</p>
           <p className="text-[36px] font-semibold leading-none tracking-[-0.03em] text-[#1D1D1F]">$400.00</p>
         </div>
       </div>
@@ -294,7 +294,7 @@ function ClaimCard() {
       <div className="relative mt-5 min-h-[300px]">
         {/* 0 and 1: the two ways to claim */}
         <div className={`absolute inset-0 transition-all duration-500 ${phase <= 1 ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-3 opacity-0"}`}>
-          <div className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-4 text-base font-semibold text-white shadow-md">
+          <div className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-3 text-[15px] font-semibold text-white shadow-md">
             <Wallet className="h-4 w-4" />
             Claim in crypto
           </div>
@@ -342,7 +342,7 @@ function ClaimCard() {
         <div className={`absolute inset-0 flex flex-col items-center justify-center text-center transition-all duration-500 ${phase === 3 ? "scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0"}`}>
           <svg width="72" height="72" viewBox="0 0 76 76" fill="none"><circle cx="38" cy="38" r="34" stroke="#1F9D55" strokeWidth="3" /><path d="M24 39l10 10 19-21" stroke="#1F9D55" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="60" strokeDashoffset={phase === 3 ? 0 : 60} style={{ transition: "stroke-dashoffset 0.7s ease 0.25s" }} /></svg>
           <p className="mt-4 text-2xl font-semibold text-[#1D1D1F]">On its way to Venmo</p>
-          <p className="mt-1 text-[#86868B]">$395.75 · no Loofta fee</p>
+          <p className="mt-1 text-[#86868B]">$395.75</p>
         </div>
       </div>
     </div>

@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { createHmac, randomBytes } from 'crypto';
 import { SupabaseService } from '@/database/supabase.service';
-import { assertSafePublicUrl, assertSafePublicUrlResolved } from '@/common/assert-safe-public-url';
+import { assertSafePublicUrl } from '@/common/assert-safe-public-url';
+import { safeHttpsRequest } from '@/common/safe-https-get';
 
 // Retry schedule in seconds after each failed attempt; after the last one the event is marked failed.
 const BACKOFF_SECONDS = [60, 300, 1800, 7200, 21600, 86400];
@@ -75,24 +76,23 @@ export class PartnerWebhooksService {
     const body = JSON.stringify(ev.payload);
     let error: string | null = null;
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8_000);
-      await assertSafePublicUrlResolved(settings.webhook_url as string, 'webhook url');
-      const res = await fetch(settings.webhook_url as string, {
-        redirect: 'manual',
+      // Delivered through the guarded client: the connection address is checked when it is made (no DNS rebinding), redirects
+      // are never followed, and the answer is size and time limited.
+      const res = await safeHttpsRequest(settings.webhook_url as string, {
         method: 'POST',
+        timeoutMs: 8_000,
+        maxBytes: 64_000,
         headers: {
           'Content-Type': 'application/json',
           'X-Loofta-Signature': PartnerWebhooksService.sign(settings.webhook_secret as string, body),
           'X-Loofta-Event-Id': ev.id,
         },
         body,
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
-      if (!res.ok) error = `HTTP ${res.status}`;
+      if (res.status < 200 || res.status >= 300) error = `HTTP ${res.status}`;
     } catch (e) {
-      error = (e as Error)?.message || 'request failed';
+      // Never store what the connection said: it can reveal how a private name resolved.
+      error = 'could not reach the URL';
     }
 
     const attempts = ev.attempts + 1;

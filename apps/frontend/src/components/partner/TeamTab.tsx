@@ -21,6 +21,7 @@ export function TeamTab({ orgId, myRole, myUserId }: { orgId: string; myRole: Pa
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<PartnerRole>("payer");
   const [link, setLink] = useState<string | null>(null);
+  const [emailed, setEmailed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const canManage = myRole === "owner" || myRole === "admin";
@@ -46,8 +47,9 @@ export function TeamTab({ orgId, myRole, myUserId }: { orgId: string; myRole: Pa
 
   const invite = () =>
     run(async () => {
-      const r = await call<{ token: string }>(`${base}/members/invite`, post({ email, role }));
+      const r = await call<{ token: string; email_sent?: boolean }>(`${base}/members/invite`, post({ email, role }));
       setLink(`${window.location.origin}/partner/portal?invite=${encodeURIComponent(r.token)}`);
+      setEmailed(r.email_sent ? email : null);
       setEmail("");
     });
 
@@ -77,7 +79,7 @@ export function TeamTab({ orgId, myRole, myUserId }: { orgId: string; myRole: Pa
           </div>
           {link && (
             <div className="mt-4 space-y-3">
-              <Notice kind="ok">Share this link with them. It works once, for 7 days, and only after they sign in with that email.</Notice>
+              <Notice kind="ok">{emailed ? `We emailed the invite to ${emailed}. ` : "We could not email it, so share this link with them. "}The link works once, for 7 days, and only after they sign in with that email.</Notice>
               <input readOnly value={link} className={inputCls} onFocus={(e) => e.currentTarget.select()} />
             </div>
           )}

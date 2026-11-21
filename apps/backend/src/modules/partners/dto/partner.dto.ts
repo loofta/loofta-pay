@@ -13,9 +13,11 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  IsUUID,
   Max,
   MaxLength,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 
@@ -111,4 +113,25 @@ export class SetWebhookDto {
   @IsString()
   @MaxLength(500)
   url: string | null;
+}
+
+export class CreateRecipientGroupDto {
+  @IsString() @MinLength(1) @MaxLength(60) name: string;
+  @IsOptional() @IsString() @MaxLength(2000) source_url?: string;
+}
+
+export class UpdateRecipientGroupDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(60) name?: string;
+  /** A public https URL that returns the list as JSON or CSV. An empty string unlinks it. */
+  @IsOptional() @IsString() @MaxLength(2000) source_url?: string;
+}
+
+export class GroupMembersDto {
+  @ApiProperty({ type: [RecipientInputDto], required: false, description: 'People to add. They are created as recipients if they are new.' })
+  @IsOptional() @IsArray() @ArrayMaxSize(1000) @ValidateNested({ each: true }) @Type(() => RecipientInputDto)
+  recipients?: RecipientInputDto[];
+
+  @ApiProperty({ type: [String], required: false, description: 'Existing recipient ids to add.' })
+  @IsOptional() @IsArray() @ArrayMaxSize(1000) @IsUUID('4', { each: true })
+  recipient_ids?: string[];
 }

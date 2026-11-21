@@ -248,7 +248,7 @@ describe('the demo partner (orgId=demo)', () => {
     const { svc } = make();
     (svc as never as { supabase: unknown }).supabase = new Proxy({}, { get: () => { throw new Error('demo must not use the database'); } });
     const q = await svc.quote('demo', 'u1');
-    expect(q.partner.name).toBe('Demo store');
+    expect(q.partner.name).toBe('Acme');
     expect(q.gross_usdc).toBe(120);
     // $0.25 flat + 1% of $120
     expect(q.partner_fee_usdc).toBeCloseTo(1.45, 6);

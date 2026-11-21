@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Avatar, Btn, Notice, PageHeader, Pill, Row, Section, Table, inputCls } from "./ui";
 import { post, usd, usePartnerApi, type PartnerRole } from "./usePartnerApi";
+import { RecipientGroups } from "./RecipientGroups";
 
 type Recipient = {
   id: string;
@@ -46,11 +47,19 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
   const [ok, setOk] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const canImport = myRole === "owner" || myRole === "admin";
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [members, setMembers] = useState<Recipient[] | null>(null);
 
   const load = useCallback(() => {
     call<{ recipients: Recipient[] }>(`${base}/recipients`).then((r) => setList(r.recipients ?? [])).catch((e: Error) => setError(e.message));
   }, [call, base]);
   useEffect(load, [load]);
+
+  const loadMembers = useCallback(() => {
+    if (!groupId) return setMembers(null);
+    call<{ recipients: Recipient[] }>(`${base}/groups/${groupId}/members`).then((r) => setMembers(r.recipients ?? [])).catch((e: Error) => setError(e.message));
+  }, [call, base, groupId]);
+  useEffect(loadMembers, [loadMembers]);
 
   const doImport = async () => {
     const { recipients, bad } = parseLines(text);
@@ -86,9 +95,13 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
         </div>
       )}
 
+      <Section title="Groups" desc="Lists of people you pay together, like audiences in a mailing tool. Link a group to a URL that returns your list and it stays up to date.">
+        <RecipientGroups base={base} canManage={canImport} selected={groupId} onSelect={setGroupId} onChanged={() => { load(); loadMembers(); }} />
+      </Section>
+
       <Section
-        title={`Recipients${list ? ` (${list.length})` : ""}`}
-        desc="Everyone you have imported or paid."
+        title={groupId ? "People in this group" : `Recipients${list ? ` (${list.length})` : ""}`}
+        desc={groupId ? "Add them to a batch from New batch, under From a group." : "Everyone you have imported or paid."}
         right={
           canImport ? (
             <Btn onClick={() => setImporting((v) => !v)}>{importing ? "Close" : "Import recipients"}</Btn>
@@ -109,13 +122,13 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
           </div>
         )}
 
-        {list === null ? (
+        {(groupId ? members : list) === null ? (
           <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>
-        ) : !list.length ? (
+        ) : !(groupId ? members : list)?.length ? (
           <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No recipients yet. You can also pay anyone directly from the Payouts screen.</p>
         ) : (
           <Table cols={["Name", "Email / handle", "Via", "Paid", "Added"]} template={TEMPLATE}>
-            {list.map((r) => {
+            {(groupId ? members : list)!.map((r) => {
               const id = r.email ?? (r.handle ? `${r.handle_platform}:${r.handle}` : r.external_user_id ?? "");
               const via = r.email ? "Email" : PLATFORM_LABEL[r.handle_platform ?? ""] ?? "-";
               const name = r.display_name || id;

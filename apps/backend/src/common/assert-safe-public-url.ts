@@ -24,7 +24,7 @@ export function assertSafePublicUrl(raw: string, label = 'url'): URL {
   return u;
 }
 
-function isPrivateIp(ip: string): boolean {
+export function isPrivateIp(ip: string): boolean {
   const v = ip.toLowerCase();
   if (v.includes(':')) {
     const mapped = v.startsWith('::ffff:') ? v.slice(7) : null;
