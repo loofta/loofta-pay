@@ -11,7 +11,7 @@ import { usd, type PartnerRole } from "./usePartnerApi";
 const manrope = Manrope({ subsets: ["latin"], display: "swap", variable: "--font-partner-sans" });
 const jbMono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--font-partner-mono" });
 
-export type NavKey = "overview" | "wallet" | "payouts" | "activity" | "recipients" | "team" | "developers" | "settings";
+export type NavKey = "overview" | "wallet" | "payouts" | "activity" | "recipients" | "team" | "developers" | "settings" | "guide";
 export type Org = { org_id: string; name: string; logo_url: string | null; status: string; role: PartnerRole };
 export type Counts = { batches: number; payouts: number; recipients: number; members: number };
 
@@ -38,6 +38,10 @@ const GROUPS: Array<{ label: string; items: Array<{ key: NavKey; label: string; 
       { key: "developers", label: "Developers" },
       { key: "settings", label: "Settings" },
     ],
+  },
+  {
+    label: "Help",
+    items: [{ key: "guide", label: "How it works" }],
   },
 ];
 
@@ -145,7 +149,8 @@ export function PartnerShell({
   onAddCompany?: () => void;
   children: ReactNode;
 }) {
-  const showSidebar = signedIn && !!current;
+  // A company that is not approved yet has nothing to navigate: it sees its review status, not the product.
+  const showSidebar = signedIn && !!current && current.status === "active";
   const bal = usdc === null ? "..." : usd(usdc).replace("$", "");
 
   return (

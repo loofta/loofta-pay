@@ -17,6 +17,8 @@ import { RecipientsTab } from "@/components/partner/RecipientsTab";
 import { TeamTab } from "@/components/partner/TeamTab";
 import { DevelopersTab } from "@/components/partner/DevelopersTab";
 import { SettingsTab } from "@/components/partner/SettingsTab";
+import { GuideTab } from "@/components/partner/GuideTab";
+import { ReviewStatus } from "@/components/partner/ReviewStatus";
 
 /** Shown while the sign-in state and your companies load: a soft pulse and card skeletons instead of the word "Loading". */
 function PortalLoading() {
@@ -41,15 +43,20 @@ function PortalLoading() {
 
 function CreateOrg({ onCreated, onCancel }: { onCreated: (orgId: string) => void; onCancel?: () => void }) {
   const call = usePartnerApi();
+  const { email: signedInEmail } = useAuth();
   const [name, setName] = useState("");
+  const [website, setWebsite] = useState("");
+  const [contact, setContact] = useState(signedInEmail ?? "");
+  const [useCase, setUseCase] = useState("");
   const [logo, setLogo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const valid = name.trim().length >= 2 && /^https:\/\/.+\..+/.test(website.trim()) && /^\S+@\S+\.\S+$/.test(contact.trim()) && useCase.trim().length >= 30;
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
-      const created = await call<{ org_id: string }>("partners", post({ name: name.trim(), ...(logo ? { logo_url: logo } : {}) }));
+      const created = await call<{ org_id: string }>("partners", post({ name: name.trim(), website: website.trim(), contact_email: contact.trim(), use_case: useCase.trim(), ...(logo ? { logo_url: logo } : {}) }));
       onCreated(created.org_id);
     } catch (e) {
       setError((e as Error).message);
@@ -60,23 +67,32 @@ function CreateOrg({ onCreated, onCancel }: { onCreated: (orgId: string) => void
   return (
     <div className="mx-auto flex w-full max-w-[520px] flex-col items-center pt-[clamp(8px,4vh,48px)] text-center">
       <div className="font-mono text-[12.5px] uppercase tracking-[0.14em] text-[color:var(--pt-ink3,#9C9CA5)]">{onCancel ? "New company" : "Get started"}</div>
-      <h1 className="m-0 mt-3 text-[clamp(30px,4vw,40px)] font-semibold leading-[1.1] tracking-[-0.02em] text-[color:var(--pt-ink,#EDEDEF)]">{onCancel ? "Add a company" : "Create your partner account"}</h1>
+      <h1 className="m-0 mt-3 text-[clamp(30px,4vw,40px)] font-semibold leading-[1.1] tracking-[-0.02em] text-[color:var(--pt-ink,#EDEDEF)]">{onCancel ? "Add a company" : "Apply for a partner account"}</h1>
       <p className="m-0 mt-3 text-[17px] leading-[1.55] text-[color:var(--pt-ink2,#C9C9D0)]">
-        Pay your people in bulk. They get paid by email and withdraw from a page with your name and logo.
+        Pay your people in bulk. They get paid by email and withdraw from a page with your name and logo. We review every company by hand before it goes live.
       </p>
       {error && <div className="mt-6 w-full text-left"><Notice kind="error">{error}</Notice></div>}
       <div className="mt-8 w-full space-y-5 rounded-[18px] border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)] p-6 text-left shadow-[0_24px_50px_-30px_rgba(40,25,15,0.25)]">
         <Field label="Company or product name">
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme" />
         </Field>
+        <Field label="Website">
+          <input className={inputCls} value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://acme.com" inputMode="url" />
+        </Field>
+        <Field label="Contact email">
+          <input className={inputCls} value={contact} onChange={(e) => setContact(e.target.value)} placeholder="team@acme.com" inputMode="email" />
+        </Field>
+        <Field label="Who do you pay, and for what?" hint="For example: 200 freelance designers, about $40,000 a month, paid monthly. At least a sentence or two.">
+          <textarea className={inputCls} rows={4} value={useCase} onChange={(e) => setUseCase(e.target.value)} maxLength={800} />
+        </Field>
         <Field label="Logo" optional>
           <LogoUpload value={logo} onChange={setLogo} />
         </Field>
-        <Btn onClick={submit} disabled={busy || name.trim().length < 2} className="w-full">
-          {busy ? "Creating..." : "Create account"}
+        <Btn onClick={submit} disabled={busy || !valid} className="w-full">
+          {busy ? "Sending..." : "Send application"}
         </Btn>
       </div>
-      <p className="mt-4 text-[14px] text-[color:var(--pt-ink3,#9C9CA5)]">You can add your team and company details afterwards.</p>
+      <p className="mt-4 text-[14px] text-[color:var(--pt-ink3,#9C9CA5)]">You can read how everything works while we review.</p>
       {onCancel && (
         <button type="button" onClick={onCancel} className="mt-2 text-[14px] font-semibold text-[#FF6A1F] hover:underline">Cancel</button>
       )}
@@ -142,11 +158,12 @@ function PartnerContent() {
   }, [ready, authenticated, inviteToken, call, loadOrgs]);
 
   const current = orgs?.find((o) => o.org_id === orgId) ?? null;
-  const treasury = useTreasury(current?.org_id ?? null, authenticated && !!current);
+  const approved = current?.status === "active";
+  const treasury = useTreasury(current?.org_id ?? null, authenticated && !!current && approved);
 
   // Sidebar badges refresh whenever you move between screens.
   useEffect(() => {
-    if (!current) return;
+    if (!current || current.status !== "active") return;
     call<Counts>(`partners/${encodeURIComponent(current.org_id)}/counts`)
       .then(setCounts)
       .catch(() => undefined);
@@ -224,7 +241,10 @@ function PartnerContent() {
       ) : orgs.length === 0 ? (
         <CreateOrg onCreated={(id) => void loadOrgs().then(() => setOrgId(id))} />
       ) : (
-        current && (
+        current && !approved ? (
+          <ReviewStatus org={current} />
+        ) : (
+          current && (
           <>
             {tab === "overview" && <OverviewTab orgId={current.org_id} treasury={treasury} counts={counts} go={setTab} />}
             {tab === "wallet" && <WalletTab orgId={current.org_id} myRole={current.role} treasury={treasury} />}
@@ -234,7 +254,9 @@ function PartnerContent() {
             {tab === "team" && <TeamTab orgId={current.org_id} myRole={current.role} myUserId={userId} />}
             {tab === "developers" && <DevelopersTab orgId={current.org_id} myRole={current.role} />}
             {tab === "settings" && <SettingsTab orgId={current.org_id} />}
+            {tab === "guide" && <GuideTab />}
           </>
+          )
         )
       )}
     </PartnerShell>

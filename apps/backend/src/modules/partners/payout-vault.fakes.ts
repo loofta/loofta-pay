@@ -58,6 +58,9 @@ export function fakeSupabase(db: FakeDb) {
     get payoutVaultCredits() { return db.from('payout_vault_credits'); },
     get partnerPaymentFeeLines() { return db.from('partner_payment_fee_lines'); },
     get partners() { return db.from('partners'); },
+    get partnerMembers() { return db.from('partner_members'); },
+    get partnerAuditLog() { return db.from('partner_audit_log'); },
+    get payoutBatches() { return db.from('payout_batches'); },
     _t: t,
   };
 }

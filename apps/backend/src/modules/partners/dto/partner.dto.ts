@@ -31,9 +31,33 @@ export class CreatePartnerDto {
   @IsOptional()
   @IsUrl({ require_tld: false })
   logo_url?: string;
+
+  // The application. A company is reviewed by hand before it can create keys, a wallet or payouts.
+  @ApiProperty({ example: 'https://clipur.com' })
+  @IsUrl({ require_tld: true, require_protocol: true, protocols: ['https'] })
+  @MaxLength(200)
+  website: string;
+
+  @ApiProperty({ example: 'team@clipur.com' })
+  @IsEmail()
+  @MaxLength(200)
+  contact_email: string;
+
+  @ApiProperty({ description: 'Who you pay, what for, and roughly how much per month.' })
+  @IsString()
+  @MinLength(30)
+  @MaxLength(800)
+  use_case: string;
+
+  @ApiPropertyOptional()
+  @IsOptional() @IsString() @MaxLength(120) legal_name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional() @IsString() @MaxLength(2) country?: string;
 }
 
 export class UpdatePartnerDto {
+  @IsOptional() @IsString() @MinLength(30) @MaxLength(800) use_case?: string;
   @IsOptional() @IsString() @MaxLength(80) name?: string;
   // null removes the logo.
   @IsOptional() @IsUrl({ require_tld: false }) logo_url?: string | null;

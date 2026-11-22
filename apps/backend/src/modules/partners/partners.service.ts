@@ -39,7 +39,10 @@ export interface Partner {
   approval_threshold_usd: number;
   integrator_id: string | null;
   recipients_pull_url: string | null;
+  /** pending (applied, waiting for review), active, rejected or suspended. Only active can do anything. */
   status: string;
+  use_case: string | null;
+  review_note: string | null;
   treasury_multisig: string | null;
   treasury_vault: string | null;
   treasury_threshold: number | null;
@@ -134,7 +137,7 @@ export class PartnersService {
    * fresh on every call (so removal is immediate) and answers "not found" for both a missing org
    * and a non-member, so org ids cannot be probed.
    */
-  async requireMembership(orgId: string, userId: string, permission: PartnerPermission): Promise<Membership> {
+  async requireMembership(orgId: string, userId: string, permission: PartnerPermission, opts: { allowUnapproved?: boolean } = {}): Promise<Membership> {
     const { data: partner } = await this.supabase.partners.select('*').eq('org_id', orgId).maybeSingle();
     if (!partner) throw new NotFoundException('Partner not found.');
     const { data: member } = await this.supabase.partnerMembers
@@ -145,16 +148,24 @@ export class PartnersService {
       .maybeSingle();
     if (!member) throw new NotFoundException('Partner not found.');
     if (!can(member.role as PartnerRole, permission)) throw new ForbiddenException('Your role does not allow this.');
-    if ((partner as Partner).status !== 'active') throw new ForbiddenException('This partner account is suspended.');
+    const status = (partner as Partner).status;
+    if (status !== 'active' && !(opts.allowUnapproved && (status === 'pending' || status === 'rejected'))) {
+      throw new ForbiddenException(
+        status === 'pending' ? 'This company is waiting for approval. Payouts and API keys open once Loofta approves it.' : 'This partner account is not active.',
+      );
+    }
     const promoted = await this.promoteFeeWalletIfDue(partner as Partner);
     return { partner: promoted, member: member as Membership['member'] };
   }
 
   /** The partner's own settings for the portal. Members only; never includes webhook secrets. */
   async getSettings(orgId: string, userId: string) {
-    const { partner, member } = await this.requireMembership(orgId, userId, 'view');
+    const { partner, member } = await this.requireMembership(orgId, userId, 'view', { allowUnapproved: true });
     return {
       org_id: partner.org_id,
+      status: partner.status,
+      use_case: partner.use_case,
+      review_note: partner.status === 'rejected' ? partner.review_note : null,
       name: partner.name,
       logo_url: partner.logo_url,
       brand_color: partner.brand_color,
@@ -201,7 +212,19 @@ export class PartnersService {
     const { count: owned } = await this.supabase.partners.select('id', { count: 'exact', head: true }).eq('owner_user_id', ownerUserId);
     if ((owned ?? 0) >= MAX_COMPANIES_PER_OWNER) throw new ConflictException(`You can run up to ${MAX_COMPANIES_PER_OWNER} companies.`);
     const { data, error } = await this.supabase.partners
-      .insert({ org_id: `org_${randomBytes(6).toString('hex')}`, owner_user_id: ownerUserId, name: dto.name.trim(), logo_url: dto.logo_url ?? null })
+      .insert({
+        org_id: `org_${randomBytes(6).toString('hex')}`,
+        owner_user_id: ownerUserId,
+        name: dto.name.trim(),
+        logo_url: dto.logo_url ?? null,
+        website: dto.website,
+        contact_email: dto.contact_email.trim().toLowerCase(),
+        use_case: dto.use_case.trim(),
+        legal_name: dto.legal_name?.trim() || null,
+        country: dto.country?.trim().toUpperCase() || null,
+        // Never self-serve: a company reviewed by Loofta becomes active, nothing else can move money or send mail.
+        status: 'pending',
+      })
       .select('*')
       .single();
     if (error || !data) throw new BadRequestException('Could not create partner account.');
@@ -213,7 +236,7 @@ export class PartnersService {
       await this.supabase.partners.delete().eq('id', data.id);
       throw new BadRequestException('Could not create partner account.');
     }
-    await this.audit(data.id, ownerUserId, 'partner.created', { type: 'partner', id: data.id });
+    await this.audit(data.id, ownerUserId, 'partner.applied', { type: 'partner', id: data.id });
     return data as Partner;
   }
 
@@ -242,9 +265,16 @@ export class PartnersService {
   // ------------------------------------------------------------ settings
 
   async update(orgId: string, userId: string, dto: UpdatePartnerDto): Promise<Partner> {
-    const { partner } = await this.requireMembership(orgId, userId, 'settings.manage');
+    // A company waiting for approval may still complete its application details.
+    const { partner } = await this.requireMembership(orgId, userId, 'settings.manage', { allowUnapproved: true });
     const patch = Object.fromEntries(Object.entries(dto).filter(([, v]) => v !== undefined));
     if (!Object.keys(patch).length) return partner;
+    // Only the application fields can change before approval. The branding a recipient sees stays locked until then,
+    // so nobody can pose as another company on a public withdraw page.
+    if (partner.status !== 'active') {
+      const allowed = new Set(['use_case', 'legal_name', 'country', 'website', 'contact_email']);
+      if (Object.keys(patch).some((k) => !allowed.has(k))) throw new ForbiddenException('Branding and payout settings open once your company is approved.');
+    }
     // We fetch recipients_pull_url from our servers, and show logo_url to recipients: both must be public https.
     if (dto.recipients_pull_url) assertSafePublicUrl(dto.recipients_pull_url, 'recipients_pull_url');
     if (dto.logo_url) assertSafePublicUrl(dto.logo_url, 'logo_url');
