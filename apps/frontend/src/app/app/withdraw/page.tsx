@@ -41,6 +41,7 @@ type Quote = {
   gross_usdc: number;
   partner_fee_usdc: number;
   loofta_fee_usdc: number;
+  fees?: Array<{ kind: string; label: string; usdc: number }>;
   net_usdc: number;
   min_usd: number;
   can_withdraw: boolean;
@@ -466,10 +467,19 @@ function WithdrawContent() {
 
                   {(
                     <div className="mt-5 divide-y divide-[color:var(--pt-w10,rgba(255,255,255,0.1))] rounded-2xl bg-[color:var(--pt-surface2,#0E0E12)] px-4">
-                      <div className="flex items-center justify-between py-3">
-                        <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">Fees</span>
-                        <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(fees)}</span>
-                      </div>
+                      {quote.fees && quote.fees.length > 0 ? (
+                        quote.fees.map((f) => (
+                          <div key={f.kind} className="flex items-center justify-between py-3">
+                            <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">{f.kind === "partner" ? `${name} fee` : f.label}</span>
+                            <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(f.usdc)}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex items-center justify-between py-3">
+                          <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">Fees</span>
+                          <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(fees)}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between py-3">
                         <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">You receive</span>
                         <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">{usd(quote.net_usdc)}</span>

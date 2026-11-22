@@ -72,7 +72,7 @@ export function NiceSelect<T extends string | number>({ value, options, onChange
         className={clsx("flex w-full items-center justify-between gap-3 rounded-xl border bg-[color:var(--pt-surface2,#0F0F11)] px-4 py-2.5 text-left text-base text-[color:var(--pt-ink,#EDEDEF)] outline-none transition-colors hover:bg-[color:var(--pt-w0p04,rgba(255,255,255,0.04))] focus-visible:border-[#EAB308]/70 disabled:cursor-not-allowed disabled:opacity-50", open ? "border-[#EAB308]/70" : "border-[color:var(--pt-w10,rgba(255,255,255,0.1))]", buttonClassName)}
       >
         <span className="truncate">{current?.label ?? placeholder}</span>
-        <ChevronDown size={18} className={clsx("shrink-0 text-slate-400 transition-transform", open && "rotate-180")} />
+        <ChevronDown size={18} className={clsx("shrink-0 text-[color:var(--pt-ink4,#94a3b8)] transition-transform", open && "rotate-180")} />
       </button>
       {open && (
         <ul id={id} role="listbox" className={clsx("absolute z-[80] max-h-72 min-w-full overflow-y-auto rounded-xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface,#17171b)] p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.6)]", up ? "bottom-full mb-2" : "top-full mt-2", align === "right" ? "right-0" : "left-0")}>
@@ -84,11 +84,11 @@ export function NiceSelect<T extends string | number>({ value, options, onChange
               onMouseEnter={() => setActive(i)}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => pick(o.value)}
-              className={clsx("flex cursor-pointer items-center justify-between gap-4 whitespace-nowrap rounded-lg px-3 py-2.5 text-base", i === active ? "bg-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] text-[color:var(--pt-ink,#fff)]" : "text-slate-300", o.value === value && "font-semibold text-[color:var(--pt-ink,#fff)]")}
+              className={clsx("flex cursor-pointer items-center justify-between gap-4 whitespace-nowrap rounded-lg px-3 py-2.5 text-base", i === active ? "bg-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] text-[color:var(--pt-ink,#fff)]"   : "text-[color:var(--pt-ink2,#cbd5e1)]", o.value === value && "font-semibold text-[color:var(--pt-ink,#fff)]")}
             >
               <span>
                 {o.label}
-                {o.hint && <span className="ml-2 text-slate-500">{o.hint}</span>}
+                {o.hint && <span className="ml-2 text-[color:var(--pt-ink4,#64748b)]">{o.hint}</span>}
               </span>
               {o.value === value && <Check size={16} className="text-[#EAB308]" />}
             </li>

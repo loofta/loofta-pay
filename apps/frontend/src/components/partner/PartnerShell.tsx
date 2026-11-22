@@ -61,7 +61,6 @@ function OrgSwitcher({ orgs, current, onSelect, onAdd }: { orgs: Org[]; current:
       >
         {mark(current, 24)}
         <span className="max-w-[140px] truncate font-medium">{current.name}</span>
-        <span className="text-[12px] text-[#86868B]">Partner</span>
         <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden>
           <path d="M3 4.5L6 7.5L9 4.5" stroke="#86868B" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
@@ -171,9 +170,6 @@ export function PartnerShell({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-5">
-          <a href="/docs" className="hidden text-[14px] text-[#6E6E73] transition hover:text-[#1D1D1F] sm:inline">
-            Docs
-          </a>
           <a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="hidden text-[14px] text-[#6E6E73] transition hover:text-[#1D1D1F] sm:inline">
             Support
           </a>

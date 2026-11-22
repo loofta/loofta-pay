@@ -87,6 +87,7 @@ export function demoQuote(opts: DemoQuery = {}): WithdrawQuote {
     gross_usdc: prize,
     partner_fee_usdc: partnerFee,
     loofta_fee_usdc: 0,
+    fees: partnerFee > 0 ? [{ kind: 'partner', label: 'Partner fee', usdc: partnerFee }] : [],
     net_usdc: Math.round((prize - partnerFee) * 1e6) / 1e6,
     min_usd: partner.withdraw_min_usd,
     can_withdraw: true,

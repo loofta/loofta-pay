@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PublicKey } from '@solana/web3.js';
 import { getAccount, getAssociatedTokenAddress } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
+import { buildFeeLines, allocateLines, publicLines, type PublicFeeLine } from './partner-fee-lines';
 import { ClaimsService, REGISTERED_BURNER_CLAIM_FEE_USD } from '@/modules/claims/claims.service';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
@@ -42,6 +43,8 @@ export interface WithdrawQuote {
   gross_usdc: number;
   partner_fee_usdc: number;
   loofta_fee_usdc: number;
+  /** The same fees as above, one line per owner, so the page can show who is paid what. */
+  fees: PublicFeeLine[];
   net_usdc: number;
   min_usd: number;
   can_withdraw: boolean;
@@ -154,6 +157,14 @@ export class PartnerWithdrawService {
       0,
     );
     const net = gross - partnerFee - looftaFee;
+    let feeLines: PublicFeeLine[] = [];
+    try {
+      feeLines = publicLines(
+        buildFeeLines({ grossUnits, partnerFeeUnits: toUnits(partnerFee), partnerWallet: partner.fee_wallet ?? null, looftaFeeUnits: toUnits(looftaFee) }).lines,
+      );
+    } catch {
+      // Fees that cannot be built (too small, no wallet) already turn into a plain reason below.
+    }
 
     let reason: string | null = null;
     if (!available.length) reason = processing.length ? 'Your payout is still being processed.' : 'Nothing to withdraw yet.';
@@ -172,7 +183,7 @@ export class PartnerWithdrawService {
 
     const strip = ({ units: _u, registered: _r, stampedAt: _s, ...v }: PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }): PayoutView => v;
     return {
-      available, processing: processing.map(strip), partnerFee, looftaFee, gross, net, reason,
+      available, processing: processing.map(strip), partnerFee, looftaFee, gross, net, reason, feeLines,
       view: available.map(strip),
     };
   }
@@ -221,6 +232,7 @@ export class PartnerWithdrawService {
       gross_usdc: c.gross,
       partner_fee_usdc: c.partnerFee,
       loofta_fee_usdc: c.looftaFee,
+      fees: c.feeLines,
       net_usdc: Math.max(c.net, 0),
       min_usd: Number(partner.withdraw_min_usd),
       can_withdraw: c.reason === null,
@@ -280,6 +292,7 @@ export class PartnerWithdrawService {
         const out = await this.claims.claimAsRecipient(p.payment_id, userId, { viaPartnerWithdraw: true, destinationAddress: dest });
         if (!out.sweepTxHash) throw new Error('Funds have not arrived yet. Try again in a minute.');
         results.push({ payment_id: p.payment_id, ok: true, tx: out.sweepTxHash });
+        await this.recordFeeLines(partner.id, p, shares[i], wallet, stampedAt);
       } catch (e) {
         this.logger.warn(`partner withdraw ${p.payment_id}: ${(e as Error).message}`);
         results.push({ payment_id: p.payment_id, ok: false, error: (e as Error).message });
@@ -291,5 +304,23 @@ export class PartnerWithdrawService {
       payouts: results.length, sent, partner_fee_usdc: c.partnerFee, to: dest ?? 'own_wallet',
     });
     return { results, partner_fee_usdc: c.partnerFee };
+  }
+  /**
+   * Writes the fee lines of one swept payout to the ledger, so the partner's fee and Loofta's fee are recorded apart.
+   * Best effort on purpose: the money has already moved and the payment row already carries the partner fee, so a missing
+   * table or a failed insert must never fail the withdrawal. The unique index makes a retry harmless.
+   */
+  private async recordFeeLines(partnerId: string, p: { payment_id: string; units: bigint; registered: boolean }, partnerShare: bigint, partnerWallet: string | null, stampedAt: string) {
+    try {
+      const looftaUnits = p.registered && p.units > toUnits(REGISTERED_BURNER_CLAIM_FEE_USD) * BigInt(2) ? toUnits(REGISTERED_BURNER_CLAIM_FEE_USD) : BigInt(0);
+      const lines = allocateLines([p.units], buildFeeLines({ grossUnits: p.units, partnerFeeUnits: partnerShare, partnerWallet, looftaFeeUnits: looftaUnits }).lines)[0];
+      if (!lines.length) return;
+      await this.supabase.partnerPaymentFeeLines.upsert(
+        lines.map((l) => ({ payment_id: p.payment_id, partner_id: partnerId, kind: l.kind, units: l.units.toString(), destination: l.destination, status: 'collected', stamped_at: stampedAt })),
+        { onConflict: 'payment_id,kind', ignoreDuplicates: true },
+      );
+    } catch (e) {
+      this.logger.warn(`fee lines for ${p.payment_id} not recorded: ${(e as Error).message}`);
+    }
   }
 }

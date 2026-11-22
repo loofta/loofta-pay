@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Avatar, Btn, Notice, PageHeader, Pill, Row, Section, Table, inputCls } from "./ui";
 import { post, usd, usePartnerApi, type PartnerRole } from "./usePartnerApi";
 import { RecipientGroups } from "./RecipientGroups";
+import { NiceSelect } from "@/components/ui/NiceSelect";
 
 type Recipient = {
   id: string;
@@ -49,6 +50,15 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
   const canImport = myRole === "owner" || myRole === "admin";
   const [groupId, setGroupId] = useState<string | null>(null);
   const [members, setMembers] = useState<Recipient[] | null>(null);
+  const [groupList, setGroupList] = useState<Array<{ id: string; name: string }>>([]);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [target, setTarget] = useState("");
+  const [newGroup, setNewGroup] = useState("");
+
+  const loadGroups = useCallback(() => {
+    call<{ groups: Array<{ id: string; name: string }> }>(`${base}/groups`).then((r) => setGroupList(r.groups ?? [])).catch(() => {});
+  }, [call, base]);
+  useEffect(loadGroups, [loadGroups, groupId]);
 
   const load = useCallback(() => {
     call<{ recipients: Recipient[] }>(`${base}/recipients`).then((r) => setList(r.recipients ?? [])).catch((e: Error) => setError(e.message));
@@ -80,6 +90,48 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
       setBusy(false);
     }
   };
+
+  const togglePick = (id: string) =>
+    setPicked((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  /** Adds the ticked people to an existing group, or to a brand new one. A person can sit in any number of groups. */
+  const addToGroup = async () => {
+    const ids = [...picked];
+    if (!ids.length) return;
+    setBusy(true);
+    setError(null);
+    setOk(null);
+    try {
+      let gid = target;
+      let gname = groupList.find((g) => g.id === gid)?.name ?? "the group";
+      if (gid === "__new") {
+        const name = newGroup.trim();
+        if (!name) throw new Error("Give the new group a name.");
+        const g = await call<{ id: string }>(`${base}/groups`, post({ name }));
+        gid = g.id;
+        gname = name;
+      }
+      if (!gid) throw new Error("Pick a group first.");
+      await call(`${base}/groups/${gid}/members`, post({ recipient_ids: ids }));
+      setOk(`Added ${ids.length} ${ids.length === 1 ? "person" : "people"} to ${gname}.`);
+      setPicked(new Set());
+      setNewGroup("");
+      setTarget("");
+      loadGroups();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectable = canImport && !groupId;
+  const rowsNow = (groupId ? members : list) ?? [];
 
   return (
     <>
@@ -127,13 +179,35 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
         ) : !(groupId ? members : list)?.length ? (
           <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No recipients yet. You can also pay anyone directly from the Payouts screen.</p>
         ) : (
-          <Table cols={["Name", "Email / handle", "Via", "Paid", "Added"]} template={TEMPLATE}>
-            {(groupId ? members : list)!.map((r) => {
+          <>
+          {selectable && picked.size > 0 && (
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#101012)] p-4">
+              <span className="text-[15px] font-medium text-[color:var(--pt-ink,#EDEDEF)]">{picked.size} selected</span>
+              <NiceSelect
+                className="w-56"
+                buttonClassName="py-2"
+                value={target}
+                onChange={setTarget}
+                placeholder="Choose a group"
+                options={[...groupList.map((g) => ({ value: g.id, label: g.name })), { value: "__new", label: "+ New group" }]}
+              />
+              {target === "__new" && <input className={`${inputCls} sm:w-56`} value={newGroup} onChange={(e) => setNewGroup(e.target.value)} placeholder="Group name" maxLength={60} />}
+              <Btn onClick={addToGroup} disabled={busy || !target}>
+                {busy ? "Adding..." : "Add to group"}
+              </Btn>
+              <button type="button" className="text-[14px] text-[color:var(--pt-ink3,#9A9AA3)] hover:underline" onClick={() => setPicked(new Set())}>
+                Clear
+              </button>
+            </div>
+          )}
+          <Table cols={selectable ? ["", "Name", "Email / handle", "Via", "Paid", "Added"] : ["Name", "Email / handle", "Via", "Paid", "Added"]} template={selectable ? `28px ${TEMPLATE}` : TEMPLATE}>
+            {rowsNow.map((r) => {
               const id = r.email ?? (r.handle ? `${r.handle_platform}:${r.handle}` : r.external_user_id ?? "");
               const via = r.email ? "Email" : PLATFORM_LABEL[r.handle_platform ?? ""] ?? "-";
               const name = r.display_name || id;
               return (
-                <Row key={r.id} template={TEMPLATE}>
+                <Row key={r.id} template={selectable ? `28px ${TEMPLATE}` : TEMPLATE}>
+                  {selectable && <input type="checkbox" aria-label={`Select ${name}`} className="h-4 w-4 accent-[#EA5B30]" checked={picked.has(r.id)} onChange={() => togglePick(r.id)} />}
                   <div className="flex min-w-0 items-center gap-3">
                     <Avatar name={name} />
                     <span className="truncate font-medium text-[color:var(--pt-ink,#EDEDEF)]">{name}</span>
@@ -148,6 +222,16 @@ export function RecipientsTab({ orgId, myRole }: { orgId: string; myRole: Partne
               );
             })}
           </Table>
+          {selectable && (
+            <button
+              type="button"
+              className="mt-3 text-[14px] text-[color:var(--pt-ink3,#9A9AA3)] hover:underline"
+              onClick={() => setPicked(picked.size === rowsNow.length ? new Set() : new Set(rowsNow.map((r) => r.id)))}
+            >
+              {picked.size === rowsNow.length ? "Unselect all" : "Select all"}
+            </button>
+          )}
+          </>
         )}
       </Section>
     </>
