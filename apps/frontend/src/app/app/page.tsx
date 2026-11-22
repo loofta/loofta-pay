@@ -28,7 +28,7 @@ export default function AppHomePage() {
       const symbol = searchParams.get("symbol");
       const chain = searchParams.get("chain");
       const cryptoPrefill = method === "crypto" && symbol && chain && to && Number.isFinite(amountUsd) && amountUsd > 0 ? { symbol, chain, address: to, amountUsd } : undefined;
-      const peerPay = method === "peer" && platformId && to && Number.isFinite(amountUsd) && amountUsd > 0 ? { platformId, identifier: to, amountUsd } : undefined;
+      const peerPay = method === "peer" && platformId && to && Number.isFinite(amountUsd) && amountUsd > 0 ? { platformId, identifier: to, amountUsd, ...(searchParams.get("intent") === "receive" ? { intent: "receive" as const } : {}), ...(searchParams.get("fast") === "1" ? { fast: true } : {}) } : undefined;
       window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: balance, method, peerPay, cryptoPrefill } }));
     }
   }, [router, searchParams]);

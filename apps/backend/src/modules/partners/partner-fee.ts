@@ -36,3 +36,23 @@ export function allocateFeeUnits(payoutUnits: bigint[], totalFeeUnits: bigint): 
   shares[largest] += totalFeeUnits - assigned;
   return shares;
 }
+
+/** Loofta's own fee on every partner withdrawal, whatever route the recipient picks: a flat part and a percentage. */
+export const LOOFTA_WITHDRAW_FLAT_USD = 0.1;
+export const LOOFTA_WITHDRAW_BPS = 50;
+/** P2P cash-outs below this are refused: the peer market does not fill smaller orders reliably. */
+export const P2P_MIN_USD = 10;
+/** P2P partner cash-outs are always priced this many percent under the market rate, so a buyer fills them fast. */
+export const P2P_RATE_PERCENT = 1;
+
+/**
+ * Loofta's fee for one withdrawal of `grossUsdc`, rounded up to the base unit. The flat part is charged once per
+ * withdrawal; `flatAlreadyPaid` drops it for the leftovers of a withdrawal that partly failed and is being retried.
+ */
+export function computeLooftaWithdrawFeeUsdc(grossUsdc: number, opts: { flatAlreadyPaid?: boolean } = {}): number {
+  if (!(grossUsdc > 0)) return 0;
+  // Whole base units all the way, so float noise (0.15 becoming 0.150001) can never round a fee up.
+  const flat = opts.flatAlreadyPaid ? 0 : Math.round(LOOFTA_WITHDRAW_FLAT_USD * 1_000_000);
+  const pct = Math.ceil((Math.round(grossUsdc * 1_000_000) * LOOFTA_WITHDRAW_BPS) / 10_000);
+  return (flat + pct) / 1_000_000;
+}

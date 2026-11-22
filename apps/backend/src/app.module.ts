@@ -24,6 +24,7 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module';
 import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-payments.module';
 import { TwitterAutopayModule } from './modules/twitter-autopay/twitter-autopay.module';
 import { TelegramBotModule } from './modules/telegram-bot/telegram-bot.module';
+import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { AgentModule } from './modules/agent/agent.module';
 import { TwitterTicketGiftsModule } from './modules/twitter-ticket-gifts/twitter-ticket-gifts.module';
 import { OfframpModule } from './modules/offramp/offramp.module';
@@ -119,6 +120,7 @@ import { MemecoinTerminalModule } from './modules/memecoin-terminal/memecoin-ter
     TwitterPaymentsModule,
     TwitterAutopayModule,
     TelegramBotModule,
+    SupportChatModule,
     AgentModule,
     TwitterTicketGiftsModule,
     OfframpModule,

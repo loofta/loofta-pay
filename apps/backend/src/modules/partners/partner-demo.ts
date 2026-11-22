@@ -1,6 +1,6 @@
 import type { PublicPartner } from './partners.service';
 import type { WithdrawQuote } from './partner-withdraw.service';
-import { computePartnerFeeUsdc } from './partner-fee';
+import { computeLooftaWithdrawFeeUsdc, computePartnerFeeUsdc, P2P_MIN_USD, P2P_RATE_PERCENT } from './partner-fee';
 import { WITHDRAW_METHODS, WithdrawMethod } from './partner-withdraw-options';
 
 /**
@@ -72,6 +72,7 @@ export function demoQuote(opts: DemoQuery = {}): WithdrawQuote {
   const partner = demoPartner(opts);
   const prize = num(opts.prize, 1, 10_000, DEMO_PRIZE_USD);
   const partnerFee = computePartnerFeeUsdc(partner, prize);
+  const looftaFee = computeLooftaWithdrawFeeUsdc(prize);
   return {
     partner,
     available: [
@@ -86,10 +87,15 @@ export function demoQuote(opts: DemoQuery = {}): WithdrawQuote {
     processing: [],
     gross_usdc: prize,
     partner_fee_usdc: partnerFee,
-    loofta_fee_usdc: 0,
-    fees: partnerFee > 0 ? [{ kind: 'partner', label: 'Partner fee', usdc: partnerFee }] : [],
-    net_usdc: Math.round((prize - partnerFee) * 1e6) / 1e6,
+    loofta_fee_usdc: looftaFee,
+    fees: [
+      ...(partnerFee > 0 ? [{ kind: 'partner' as const, label: 'Partner fee', usdc: partnerFee }] : []),
+      { kind: 'loofta' as const, label: 'Loofta fee', usdc: looftaFee },
+    ],
+    net_usdc: Math.round((prize - partnerFee - looftaFee) * 1e6) / 1e6,
     min_usd: partner.withdraw_min_usd,
+    p2p_min_usd: P2P_MIN_USD,
+    p2p_rate_percent: P2P_RATE_PERCENT,
     can_withdraw: true,
     reason: null,
     methods: o.methods,

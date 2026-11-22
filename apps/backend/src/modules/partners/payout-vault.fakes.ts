@@ -16,7 +16,13 @@ class FakeQuery {
   private opts: any;
   private wantRows = false;
   constructor(private db: FakeDb, private table: string) {}
-  select() { this.wantRows = true; return this; }
+  private countWanted = false;
+  private max = Infinity;
+  select(_c?: string, o?: { count?: string }) { this.wantRows = true; this.countWanted = !!o?.count; return this; }
+  neq(c: string, v: unknown) { this.filters.push((r) => r[c] !== v); return this; }
+  gt(c: string, v: any) { this.filters.push((r) => r[c] > v); return this; }
+  order() { return this; }
+  limit(n: number) { this.max = n; return this; }
   eq(c: string, v: unknown) { this.filters.push((r) => r[c] === v); return this; }
   is(c: string, v: unknown) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
   in(c: string, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
@@ -26,7 +32,10 @@ class FakeQuery {
   upsert(p: any, o?: any) { this.op = 'upsert'; this.payload = p; this.opts = o; return this; }
   private run(): { data: any; error: any } {
     const rows = this.db.rows(this.table);
-    if (this.op === 'select') return { data: rows.filter((r) => this.filters.every((f) => f(r))), error: null };
+    if (this.op === 'select') {
+      const data = rows.filter((r) => this.filters.every((f) => f(r))).slice(0, this.max);
+      return { data, error: null, ...(this.countWanted ? { count: data.length } : {}) } as { data: any; error: any };
+    }
     if (this.op === 'update') {
       const hit = rows.filter((r) => this.filters.every((f) => f(r)));
       hit.forEach((r) => Object.assign(r, this.payload));
@@ -58,6 +67,10 @@ export function fakeSupabase(db: FakeDb) {
     get payoutVaultCredits() { return db.from('payout_vault_credits'); },
     get partnerPaymentFeeLines() { return db.from('partner_payment_fee_lines'); },
     get partners() { return db.from('partners'); },
+    get users() { return db.from('users'); },
+    get supportThreads() { return db.from('support_threads'); },
+    get supportMessages() { return db.from('support_messages'); },
+    getClient() { return { from: (t: string) => db.from(t) }; },
     get partnerMembers() { return db.from('partner_members'); },
     get partnerAuditLog() { return db.from('partner_audit_log'); },
     get payoutBatches() { return db.from('payout_batches'); },

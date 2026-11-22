@@ -28,6 +28,8 @@ export type PeerPayRequest = {
   intent?: "pay" | "receive";
   /** Start the cash-out as soon as the claimed USDC is in the Loofta wallet. */
   autoStart?: boolean;
+  /** Priced under the market rate from the start and not switchable, as a partner withdrawal always is. */
+  fast?: boolean;
 };
 
 export interface PeerPlatform {

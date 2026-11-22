@@ -85,7 +85,7 @@ export function OverviewTab({ orgId, treasury, counts, go }: { orgId: string; tr
       <section className="flex flex-col gap-[18px]">
         <div className="flex items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
-            <h2 className="m-0 text-[24px] font-bold tracking-[-0.025em] text-[#1D1D1F]">Checklist</h2>
+            <h2 className="m-0 text-[24px] font-extrabold tracking-[-0.025em] text-[#1D1D1F]">Checklist</h2>
             <p className="m-0 text-[15px] text-[#6E6E73]">{doneCount} of {items.length} done before your first payout.</p>
           </div>
           <div className="flex gap-1" aria-hidden>
@@ -126,7 +126,7 @@ export function OverviewTab({ orgId, treasury, counts, go }: { orgId: string; tr
 
       <section className="flex flex-col gap-[18px]">
         <div className="flex flex-col gap-1">
-          <h2 className="m-0 text-[24px] font-bold tracking-[-0.025em] text-[#1D1D1F]">Withdraw page</h2>
+          <h2 className="m-0 text-[24px] font-extrabold tracking-[-0.025em] text-[#1D1D1F]">Withdraw page</h2>
           <p className="m-0 text-[15px] text-[#6E6E73]">Send recipients here to see what they received and withdraw it. Your fee is shown before they confirm.</p>
         </div>
         <div className="flex items-center gap-3 rounded-2xl bg-[#F5F5F7] py-2 pl-[18px] pr-2">

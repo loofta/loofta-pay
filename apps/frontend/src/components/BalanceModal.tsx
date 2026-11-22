@@ -560,7 +560,7 @@ export function BalanceModal({
   // Fast delivery: the market maker keeps 1% so the order fills sooner. Off by default, chosen at checkout.
   const [peerFast, setPeerFast] = useState(false);
   const peerFastRef = useRef(false);
-  peerFastRef.current = peerFast;
+  peerFastRef.current = peerFast || !!peerPay?.fast;
   useEffect(() => { setPeerFast(false); }, [peerPay?.platformId, peerPay?.identifier, peerPay?.amountUsd]);
   const [peerOfframpId, setPeerOfframpId] = useState<string | null>(null);
   const [peerShareId, setPeerShareId] = useState<string | null>(null);
@@ -2128,7 +2128,7 @@ export function BalanceModal({
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
   const peerReceive = peerPay?.intent === "receive";
-  const peerRatePercent = peerFast ? FAST_RATE_PERCENT : 0;
+  const peerRatePercent = peerFast || peerPay?.fast ? FAST_RATE_PERCENT : 0;
   const peerPayGrossUsd = peerPay ? (peerReceive ? peerPay.amountUsd : cashoutGrossUsdc(peerPay.amountUsd, peerRatePercent)) : 0;
   const peerPayFeeUsd = peerPay
     ? (peerReceive
@@ -2138,9 +2138,9 @@ export function BalanceModal({
   const peerReceiveUsd = peerPay ? (peerReceive ? cashoutPayoutUsdc(peerPay.amountUsd, peerRatePercent) : peerPay.amountUsd) : 0;
   const peerFastSwitch = (
     <FastDeliverySwitch
-      checked={peerFast}
+      checked={peerFast || !!peerPay?.fast}
       onChange={setPeerFast}
-      disabled={peerSubmitting}
+      disabled={peerSubmitting || !!peerPay?.fast}
       dark={dark}
       estimateLabel={peerEstimate?.eta?.label ?? null}
       estimateLoading={peerEstimateLoading}

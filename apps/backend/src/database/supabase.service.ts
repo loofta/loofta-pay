@@ -191,6 +191,14 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('payout_vault_credits');
   }
 
+  get supportThreads() {
+    return this.client.from('support_threads');
+  }
+
+  get supportMessages() {
+    return this.client.from('support_messages');
+  }
+
   get partnerPaymentFeeLines() {
     return this.client.from('partner_payment_fee_lines');
   }

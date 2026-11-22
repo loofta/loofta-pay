@@ -4,12 +4,12 @@ import { PublicKey } from '@solana/web3.js';
 import { getAccount, getAssociatedTokenAddress } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
 import { buildFeeLines, allocateLines, publicLines, type PublicFeeLine } from './partner-fee-lines';
-import { ClaimsService, REGISTERED_BURNER_CLAIM_FEE_USD } from '@/modules/claims/claims.service';
+import { ClaimsService } from '@/modules/claims/claims.service';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { isValidSolanaAddress } from '@/common/solana-address';
 import { PartnersService, Partner, PublicPartner } from './partners.service';
-import { allocateFeeUnits, computePartnerFeeUsdc } from './partner-fee';
+import { allocateFeeUnits, computeLooftaWithdrawFeeUsdc, computePartnerFeeUsdc, P2P_MIN_USD, P2P_RATE_PERCENT } from './partner-fee';
 import { DEMO_ORG_ID, DemoQuery, demoConfirm, demoQuote } from './partner-demo';
 import { WITHDRAW_METHODS, WithdrawMethod, enabledMethods } from './partner-withdraw-options';
 
@@ -47,6 +47,9 @@ export interface WithdrawQuote {
   fees: PublicFeeLine[];
   net_usdc: number;
   min_usd: number;
+  p2p_min_usd: number;
+  /** Percent under the market rate that P2P pays out at. Shown to the recipient before they confirm. */
+  p2p_rate_percent: number;
   can_withdraw: boolean;
   reason: string | null;
   /** Routes this partner leaves on, in display order. */
@@ -133,7 +136,7 @@ export class PartnerWithdrawService {
     return { rows };
   }
 
-  private async compute(partner: Partner, userId: string) {
+  private async compute(partner: Partner, userId: string, method?: string) {
     const { rows } = await this.findPayouts(partner, userId);
     const available = rows.filter((r) => r.funded);
     const processing = rows.filter((r) => !r.funded);
@@ -152,10 +155,8 @@ export class PartnerWithdrawService {
       flatAlreadyPaid = !!done?.length;
     }
     const partnerFee = partnerActive ? computePartnerFeeUsdc(partner, gross, { flatAlreadyPaid }) : 0;
-    const looftaFee = available.reduce(
-      (a, r) => a + (r.registered && r.units > toUnits(REGISTERED_BURNER_CLAIM_FEE_USD) * BigInt(2) ? REGISTERED_BURNER_CLAIM_FEE_USD : 0),
-      0,
-    );
+    // Loofta's fee is the same on every route: a flat part and a percentage, always shown to the recipient first.
+    const looftaFee = computeLooftaWithdrawFeeUsdc(gross, { flatAlreadyPaid });
     const net = gross - partnerFee - looftaFee;
     let feeLines: PublicFeeLine[] = [];
     try {
@@ -169,6 +170,7 @@ export class PartnerWithdrawService {
     let reason: string | null = null;
     if (!available.length) reason = processing.length ? 'Your payout is still being processed.' : 'Nothing to withdraw yet.';
     else if (gross < Number(partner.withdraw_min_usd)) reason = `The minimum withdrawal is $${Number(partner.withdraw_min_usd).toFixed(2)}.`;
+    else if (method === 'p2p' && gross < P2P_MIN_USD) reason = `P2P cash-outs start at $${P2P_MIN_USD.toFixed(2)}.`;
     else if (net <= 0) reason = 'This amount is too small to withdraw after fees.';
     else if (partnerFee > 0) {
       if (!partner.fee_wallet) reason = 'Withdrawals from this partner are unavailable right now.';
@@ -235,6 +237,8 @@ export class PartnerWithdrawService {
       fees: c.feeLines,
       net_usdc: Math.max(c.net, 0),
       min_usd: Number(partner.withdraw_min_usd),
+      p2p_min_usd: P2P_MIN_USD,
+      p2p_rate_percent: P2P_RATE_PERCENT,
       can_withdraw: c.reason === null,
       reason: c.reason,
     };
@@ -261,7 +265,7 @@ export class PartnerWithdrawService {
     const wanted: WithdrawMethod[] = opts.method ? [opts.method as WithdrawMethod] : dest ? ['usdc'] : ['token', 'bank', 'p2p'];
     if (dest && opts.method && opts.method !== 'usdc') throw new BadRequestException('A destination wallet only applies to USDC withdrawals.');
     if (!wanted.some((m) => on.includes(m))) throw new ForbiddenException('This way of withdrawing is switched off by this partner.');
-    const c = await this.compute(partner, userId);
+    const c = await this.compute(partner, userId, opts.method);
     if (c.reason) throw new BadRequestException(c.reason);
     if (c.partnerFee > opts.maxFeeUsdc + 1e-9) {
       throw new ConflictException('The fee changed since you last looked. Review it and confirm again.');
@@ -270,6 +274,7 @@ export class PartnerWithdrawService {
     // One stamp time for the whole withdrawal, so a retry can tell which payouts belonged to it.
     const stampedAt = new Date().toISOString();
     const shares = allocateFeeUnits(c.available.map((r) => r.units), toUnits(c.partnerFee));
+    const looftaShares = allocateFeeUnits(c.available.map((r) => r.units), toUnits(c.looftaFee));
     const wallet = c.partnerFee > 0 ? partner.fee_wallet : null;
     const results: Array<{ payment_id: string; ok: boolean; tx?: string; error?: string }> = [];
 
@@ -280,6 +285,7 @@ export class PartnerWithdrawService {
         const { data: stamped } = await this.supabase.payments
           .update({
             partner_fee_usdc: Number(shares[i]) / 1e6,
+            partner_loofta_fee_usdc: Number(looftaShares[i]) / 1e6,
             partner_fee_wallet: shares[i] > BigInt(0) ? wallet : null,
             partner_fee_stamped_at: stampedAt,
           })
@@ -292,7 +298,7 @@ export class PartnerWithdrawService {
         const out = await this.claims.claimAsRecipient(p.payment_id, userId, { viaPartnerWithdraw: true, destinationAddress: dest });
         if (!out.sweepTxHash) throw new Error('Funds have not arrived yet. Try again in a minute.');
         results.push({ payment_id: p.payment_id, ok: true, tx: out.sweepTxHash });
-        await this.recordFeeLines(partner.id, p, shares[i], wallet, stampedAt);
+        await this.recordFeeLines(partner.id, p, shares[i], looftaShares[i], wallet, stampedAt);
       } catch (e) {
         this.logger.warn(`partner withdraw ${p.payment_id}: ${(e as Error).message}`);
         results.push({ payment_id: p.payment_id, ok: false, error: (e as Error).message });
@@ -310,9 +316,8 @@ export class PartnerWithdrawService {
    * Best effort on purpose: the money has already moved and the payment row already carries the partner fee, so a missing
    * table or a failed insert must never fail the withdrawal. The unique index makes a retry harmless.
    */
-  private async recordFeeLines(partnerId: string, p: { payment_id: string; units: bigint; registered: boolean }, partnerShare: bigint, partnerWallet: string | null, stampedAt: string) {
+  private async recordFeeLines(partnerId: string, p: { payment_id: string; units: bigint }, partnerShare: bigint, looftaUnits: bigint, partnerWallet: string | null, stampedAt: string) {
     try {
-      const looftaUnits = p.registered && p.units > toUnits(REGISTERED_BURNER_CLAIM_FEE_USD) * BigInt(2) ? toUnits(REGISTERED_BURNER_CLAIM_FEE_USD) : BigInt(0);
       const lines = allocateLines([p.units], buildFeeLines({ grossUnits: p.units, partnerFeeUnits: partnerShare, partnerWallet, looftaFeeUnits: looftaUnits }).lines)[0];
       if (!lines.length) return;
       await this.supabase.partnerPaymentFeeLines.upsert(

@@ -228,7 +228,7 @@ export function PartnerShell({
         )}
 
         <main className="min-w-0 flex-1 rounded-[22px] bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.04),0_20px_50px_-30px_rgba(40,25,15,0.15)]">
-          <div className={`flex w-full max-w-[1000px] flex-col px-[clamp(20px,4vw,56px)] pb-[72px] pt-[clamp(28px,4vw,56px)] mx-auto`}>
+          <div className={`flex w-full max-w-[1000px] flex-col px-[clamp(20px,4vw,56px)] lg:px-0 pb-[72px] pt-[clamp(28px,4vw,56px)] mx-auto`}>
             {showSidebar && (
               <div className="mb-6 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
                 {GROUPS.flatMap((g) => g.items).map((it) => (

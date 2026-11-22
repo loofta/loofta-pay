@@ -17,7 +17,7 @@ export function PageHeader({ title, blurb, actions, corner }: { crumb?: string; 
   return (
     <header className="mb-12 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
       <div className="flex min-w-0 flex-col gap-2">
-        <h1 className="m-0 font-bold leading-[1.05] tracking-[-0.035em] text-[#1D1D1F]" style={{ fontSize: "clamp(34px,3.6vw,44px)" }}>
+        <h1 className="m-0 font-extrabold leading-[1.05] tracking-[-0.035em] text-[#1D1D1F]" style={{ fontSize: "clamp(34px,3.6vw,44px)" }}>
           {title}
         </h1>
         {blurb && <p className="m-0 max-w-[640px] text-[17px] leading-[1.5] text-[#6E6E73]">{blurb}</p>}
@@ -38,7 +38,7 @@ export function Section({ title, desc, right, children }: { title: string; desc?
     <section className="mt-12 flex flex-col gap-[18px] first:mt-0">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="m-0 text-[24px] font-bold tracking-[-0.025em] text-[#1D1D1F]">{title}</h2>
+          <h2 className="m-0 text-[24px] font-extrabold tracking-[-0.025em] text-[#1D1D1F]">{title}</h2>
           {desc && <p className="m-0 max-w-[760px] text-[15px] leading-[1.55] text-[#6E6E73]">{desc}</p>}
         </div>
         {right}

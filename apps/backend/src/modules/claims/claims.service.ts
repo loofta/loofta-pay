@@ -2863,6 +2863,9 @@ export class ClaimsService {
     const partnerId = ((claim as { partner_id?: string | null }).partner_id || '').trim() || null;
     let partnerFeeUnits = BigInt(0);
     let partnerFeeWallet: string | null = null;
+    // Loofta's own withdrawal fee, stamped with the partner fee before the sweep. Null on older stamps, which keep the
+    // previous behaviour below.
+    let stampedLooftaFeeUnits: bigint | null = null;
     if (partnerId) {
       const stamped = (claim as { partner_fee_stamped_at?: string | null }).partner_fee_stamped_at;
       if (!stamped) {
@@ -2874,6 +2877,12 @@ export class ClaimsService {
       }
       partnerFeeUnits = BigInt(Math.round(stampedFee * 1_000_000));
       partnerFeeWallet = ((claim as { partner_fee_wallet?: string | null }).partner_fee_wallet || '').trim() || null;
+      const stampedLoofta = (claim as { partner_loofta_fee_usdc?: string | number | null }).partner_loofta_fee_usdc;
+      if (stampedLoofta !== null && stampedLoofta !== undefined) {
+        const v = Number(stampedLoofta);
+        if (!Number.isFinite(v) || v < 0) throw new BadRequestException('This payout has an invalid fee. Please contact support.');
+        stampedLooftaFeeUnits = BigInt(Math.round(v * 1_000_000));
+      }
       if (partnerFeeUnits > BigInt(0) && (!partnerFeeWallet || !isValidSolanaAddress(partnerFeeWallet))) {
         throw new BadRequestException('This payout has an invalid fee destination. Please contact support.');
       }
@@ -3019,7 +3028,9 @@ export class ClaimsService {
             : BigInt(0);
         const looftaBaseFeeUnits = isSplPrize
           ? BigInt(0)
-          : feePayerKp && opts?.looftaFeeUsdc
+          : stampedLooftaFeeUnits !== null
+            ? (feePayerKp ? stampedLooftaFeeUnits : BigInt(0))
+            : feePayerKp && opts?.looftaFeeUsdc
             ? BigInt(Math.round(opts.looftaFeeUsdc * 1_000_000))
             : feePayerKp && isCrossChain && balance > expectedUnits
               ? balance - expectedUnits

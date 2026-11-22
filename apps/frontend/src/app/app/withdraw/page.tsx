@@ -17,6 +17,8 @@ import { findUsdcOnSolana } from "@/lib/depositRails";
 import { findTokenBySelection, formatChainLabel } from "@/lib/tokens";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import type { TokenSelection } from "@/app/utils/types";
+import { SupportChat } from "@/components/support/SupportChat";
+import { LatestCashout } from "@/components/support/LatestCashout";
 
 const BACKEND = clientApiBase();
 const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -44,6 +46,9 @@ type Quote = {
   fees?: Array<{ kind: string; label: string; usdc: number }>;
   net_usdc: number;
   min_usd: number;
+  p2p_min_usd?: number;
+  /** Percent under the market rate P2P pays out at. */
+  p2p_rate_percent?: number;
   can_withdraw: boolean;
   reason: string | null;
   /** The cash-out routes this partner leaves on. */
@@ -59,10 +64,10 @@ type Group = "crypto" | "cash";
 const NEXT_METHOD: Partial<Record<Method, "crypto" | "peer">> = { token: "crypto", p2p: "peer" };
 
 const METHODS: Record<Method, { title: string; hint: string; badge?: string; icons: { src: string; bg: string }[] }> = {
-  usdc: { title: "USDC on Solana", hint: "To any Solana wallet", badge: "Fastest", icons: [{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/solana-mark.svg", bg: "#111" }] },
-  token: { title: "Other tokens", hint: "BTC, ETH, ZEC, and other chains", icons: [{ src: "/images/btc.svg", bg: "#F7931A" }, { src: "/images/eth.svg", bg: "#627EEA" }] },
-  bank: { title: "Bank or cards", hint: "Bank account, debit card or PAJ Cash", icons: [{ src: "/images/icons/card-chip.svg", bg: "#1C1C22" }] },
-  p2p: { title: "Private P2P", hint: "Wise, PayPal, Revolut, Venmo and more", icons: [{ src: "/images/platforms/revolut.png", bg: "#1C1C22" }, { src: "/images/platforms/venmo.png", bg: "#008CFF" }] },
+  usdc: { title: "USDC on Solana", hint: "To any Solana wallet, in seconds", badge: "Fastest", icons: [{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/solana-mark.svg", bg: "#111" }] },
+  token: { title: "Other tokens", hint: "BTC, ETH and other chains, a few minutes", icons: [{ src: "/images/btc.svg", bg: "#F7931A" }, { src: "/images/eth.svg", bg: "#627EEA" }] },
+  bank: { title: "Bank or cards", hint: "Bank, card or PAJ Cash, time set by your provider", icons: [{ src: "/images/icons/card-chip.svg", bg: "#1C1C22" }] },
+  p2p: { title: "Private P2P", hint: "Wise, PayPal, Revolut and more. From $10, paid 1% under the market rate", icons: [{ src: "/images/platforms/revolut.png", bg: "#1C1C22" }, { src: "/images/platforms/venmo.png", bg: "#008CFF" }] },
 };
 const GROUPS: Record<Group, Method[]> = { crypto: ["usdc", "token"], cash: ["bank", "p2p"] };
 
@@ -188,9 +193,15 @@ function WithdrawContent() {
   const tokenChoices = tokens.filter((t) => !isSol(t.chain) && (!usdcSol || t.tokenId !== usdcSol.tokenId));
   const token = findTokenBySelection(tokens, tokenSel);
   const tokenOk = method !== "token" || (!!token && isValidAddressForChain(tokenAddr.trim(), token.chain));
-  const walletOk = (method !== "usdc" || SOLANA_ADDRESS.test(wallet.trim())) && p2pOk && tokenOk;
   const hasPayouts = !!quote && quote.gross_usdc > 0;
   const belowMin = hasPayouts && !!quote && quote.gross_usdc < quote.min_usd;
+  // P2P always pays out a little under the market rate so a buyer fills it fast. The recipient sees that before confirming.
+  const p2pMin = quote?.p2p_min_usd ?? 10;
+  const p2pRate = quote?.p2p_rate_percent ?? 1;
+  const p2pBelow = method === "p2p" && !!quote && quote.gross_usdc < p2pMin;
+  const p2pCut = method === "p2p" && quote ? Math.round(quote.net_usdc * p2pRate) / 100 : 0;
+  const youReceive = quote ? Math.max(quote.net_usdc - p2pCut, 0) : 0;
+  const walletOk = (method !== "usdc" || SOLANA_ADDRESS.test(wallet.trim())) && p2pOk && tokenOk && !p2pBelow;
   const fees = quote ? quote.partner_fee_usdc + quote.loofta_fee_usdc : 0;
   // The partner can switch routes off. Older responses carry no list, which means every route is on.
   const on = (m: Method) => !quote?.methods || quote.methods.includes(m);
@@ -239,7 +250,7 @@ function WithdrawContent() {
           const home = window.location.pathname.startsWith("/app") ? "/app" : "/";
           // P2P carries the platform, handle and amount, so the cash-out opens already filled in.
           const extra = method === "p2p" && platform
-            ? `&platform=${encodeURIComponent(platform.id)}&to=${encodeURIComponent(handle.trim())}&amount=${encodeURIComponent(quote.net_usdc.toFixed(2))}`
+            ? `&platform=${encodeURIComponent(platform.id)}&to=${encodeURIComponent(handle.trim())}&amount=${encodeURIComponent(quote.net_usdc.toFixed(2))}&intent=receive&fast=1`
             : "";
           const tokenExtra = method === "token" && token
             ? `&symbol=${encodeURIComponent(token.symbol)}&chain=${encodeURIComponent(token.chain)}&to=${encodeURIComponent(tokenAddr.trim())}&amount=${encodeURIComponent(quote.net_usdc.toFixed(2))}`
@@ -307,6 +318,8 @@ function WithdrawContent() {
               </button>
             </div>
           )}
+
+          {authenticated && !isDemo && !bankOpen && <LatestCashout />}
 
           {authenticated && bankOpen && solanaWallets[0]?.address && (
             <div className="mt-6">
@@ -457,6 +470,7 @@ function WithdrawContent() {
                             className="w-full rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface2,#0E0E12)] px-4 py-3 text-base text-[color:var(--pt-ink,#fff)] outline-none focus:border-[#FF7A2A]/60"
                           />
                           <p className="text-sm text-[color:var(--pt-ink3,#8A8893)]">{platform.idLabel}</p>
+                          {p2pBelow && <p className="text-sm text-[color:var(--pt-warn,#FF8A5C)]">P2P cash-outs start at {usd(p2pMin)}. You have {usd(quote.gross_usdc)}. Pick another way to withdraw, or wait for more payouts.</p>}
                           {platform.maxUSDC && quote.net_usdc > platform.maxUSDC && <p className="text-sm text-[color:var(--pt-warn,#FF8A5C)]">{platform.name} allows up to {usd(platform.maxUSDC)} per cash-out.</p>}
                         </>
                       )}
@@ -480,15 +494,21 @@ function WithdrawContent() {
                           <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(fees)}</span>
                         </div>
                       )}
+                      {method === "p2p" && (
+                        <div className="flex items-center justify-between py-3">
+                          <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">P2P rate, {p2pRate}% under market</span>
+                          <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(p2pCut)}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between py-3">
                         <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">You receive</span>
-                        <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">{usd(quote.net_usdc)}</span>
+                        <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">{usd(method === "p2p" ? youReceive : quote.net_usdc)}</span>
                       </div>
                     </div>
                   )}
 
                   <GradientActionButton className="mt-5" onClick={() => void confirm()} disabled={busy || !quote.can_withdraw || !walletOk} loading={busy} loadingText={stage ?? "Sending..."}>
-                    {method === "usdc" ? `Withdraw ${usd(quote.net_usdc)}` : method === "p2p" ? `Cash out ${usd(quote.net_usdc)}` : method === "token" ? `Swap ${usd(quote.net_usdc)}` : "Continue to bank or card"}
+                    {method === "usdc" ? `Withdraw ${usd(quote.net_usdc)}` : method === "p2p" ? `Cash out ${usd(youReceive)}` : method === "token" ? `Swap ${usd(quote.net_usdc)}` : "Continue to bank or card"}
                   </GradientActionButton>
                   {quote.reason && <p className="mt-3 text-base text-[color:var(--pt-ink2,#C8C6D0)]">{quote.reason}</p>}
                 </div>
@@ -502,11 +522,12 @@ function WithdrawContent() {
 
         <div className="mt-8 flex items-center justify-center gap-2 text-sm text-[color:var(--pt-ink4,#6E6C78)]">
           <span>Powered by</span>
-          <a href="https://loofta.com/" className="inline-flex items-center transition-opacity hover:opacity-90" aria-label="Loofta">
-            <Image src="/loofta.svg" alt="Loofta" width={72} height={18} className="h-[18px] w-auto opacity-80" />
+          <a href="https://loofta.com/" className="inline-flex items-center opacity-60 transition-opacity hover:opacity-100" aria-label="Loofta">
+            <Image src="/loofta.svg" alt="Loofta" width={72} height={18} className="h-3 w-auto" />
           </a>
         </div>
       </div>
+      {authenticated && !isDemo && <SupportChat getAccessToken={getAccessToken} orgId={orgId} />}
     </div>
   );
 }
