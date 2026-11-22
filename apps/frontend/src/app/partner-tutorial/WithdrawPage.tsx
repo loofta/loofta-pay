@@ -70,7 +70,7 @@ export function WithdrawPage({
           <>
             <p className="back">← USDC on Solana</p>
             <label className="flab">Solana wallet address</label>
-            <div className={`inp ${walletFocus ? "f" : ""}`}>{wallet || <span style={{ color: "#6e6c78" }}>Paste any Solana wallet address</span>}</div>
+            <div className={`inp ${walletFocus ? "f" : ""}`}>{wallet || <span style={{ color: "#86868b" }}>Paste any Solana wallet address</span>}</div>
             <p className="note">Only send to a wallet that supports USDC on Solana. Check the address, it cannot be undone.</p>
             <div className="sum"><div><span>Fees</span><span>{usd(fee)}</span></div><div><span>You receive</span><span>{usd(net)}</span></div></div>
             <div className="go">Withdraw {usd(net)}</div>
@@ -79,7 +79,7 @@ export function WithdrawPage({
         {view === "sent" && (
           <>
             <p className="sent" style={{ marginTop: 20 }}>Sent 1 payout.</p>
-            <p className="sent" style={{ color: "#c8c6d0" }}>There is nothing to withdraw for {email} yet. What you already received is listed below.</p>
+            <p className="sent" style={{ color: "#3a3a3c" }}>There is nothing to withdraw for {email} yet. What you already received is listed below.</p>
             <div className="hist">
               <p className="lab" style={{ margin: 0 }}>RECEIVED</p>
               <ul><li><span><b>Summer Quest, 1st place</b><small>Sent {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</small></span><b>{usd(amount)}</b></li></ul>

@@ -77,8 +77,8 @@ type Ctx = { s: Setup; accent: string; on: string };
 const On = ({ show, children, delay = 0 }: { show: boolean; children: ReactNode; delay?: number }) => (
   <div className={`g ${show ? "on" : ""}`} style={{ transitionDelay: `${delay}ms` }}>{children}</div>
 );
-const Browser = ({ url, dark, children }: { url: string; dark?: boolean; children: ReactNode }) => (
-  <div className={`t-frame ${dark ? "dark" : ""}`}>
+const Browser = ({ url, children }: { url: string; children: ReactNode }) => (
+  <div className="t-frame">
     <div className="t-chrome"><i /><i /><i /><span>{url}</span></div>
     {children}
   </div>
@@ -231,7 +231,7 @@ function Setup({ c }: { c: Ctx }) {
   const f = feeFor({ fee: c.s.fee, pct: c.s.pct }, amount);
   return (
     <div className="t-stage">
-      <Browser url="pay.loofta.com/partner/portal" dark>
+      <Browser url="pay.loofta.com/partner/portal">
         <div className="t-pad t-two">
           <div>
             <div className="lbl" style={{ marginTop: 0 }}>Name</div>
@@ -239,7 +239,7 @@ function Setup({ c }: { c: Ctx }) {
             <div className="lbl">Logo</div>
             <div style={{ display: "flex", gap: 8 }}>
               {[...LOGOS.filter((l) => l.id !== c.s.logo).slice(0, 3), LOGOS.find((l) => l.id === c.s.logo)!].map((l, i) => (
-                <span key={l.id} style={{ padding: 3, borderRadius: 12, border: `2px solid ${p >= 1 && i === 3 ? "#ededef" : "transparent"}`, opacity: p >= 1 && i !== 3 ? 0.35 : 1, transition: "all .4s", display: "inline-flex" }}><Mark id={l.id} size={34} /></span>
+                <span key={l.id} style={{ padding: 3, borderRadius: 12, border: `2px solid ${p >= 1 && i === 3 ? "#1d1d1f" : "transparent"}`, opacity: p >= 1 && i !== 3 ? 0.35 : 1, transition: "all .4s", display: "inline-flex" }}><Mark id={l.id} size={34} /></span>
               ))}
             </div>
             <div className="lbl">Your fee</div>
@@ -249,7 +249,7 @@ function Setup({ c }: { c: Ctx }) {
             </div>
           </div>
           <On show={p >= 1}>
-            <div style={{ background: "#121214", border: "1px solid rgba(255,255,255,.08)", borderRadius: 16, padding: 18 }}>
+            <div style={{ background: "#f5f5f7", border: "1px solid rgba(0,0,0,.08)", borderRadius: 16, padding: 18 }}>
               <div style={{ display: "flex", gap: 9, alignItems: "center", fontWeight: 650 }}>
                 <Mark id={c.s.logo} size={26} />{c.s.brand}
               </div>
@@ -257,7 +257,7 @@ function Setup({ c }: { c: Ctx }) {
               <div style={{ fontSize: 34, fontWeight: 650, letterSpacing: "-0.03em" }}>{usd(amount)}</div>
               <div className={`g ${p >= 2 ? "on" : ""}`} style={{ marginTop: 10, fontSize: 15 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0" }}><span className="mut">{c.s.brand} fee</span><span>-{usd(f)}</span></div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderTop: "1px solid rgba(255,255,255,.08)", fontWeight: 650 }}><span>You receive</span><span>{usd(amount - f)}</span></div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderTop: "1px solid rgba(0,0,0,.08)", fontWeight: 650 }}><span>You receive</span><span>{usd(amount - f)}</span></div>
               </div>
             </div>
           </On>
@@ -272,18 +272,18 @@ function Wallet() {
   const bal = useCount(2500, 1500, 1400);
   return (
     <div className="t-stage">
-      <Browser url="pay.loofta.com/partner/portal" dark>
+      <Browser url="pay.loofta.com/partner/portal">
         <div className="t-pad">
           <div className="lbl" style={{ marginTop: 0 }}>Company wallet</div>
           <div style={{ fontSize: 52, fontWeight: 650, letterSpacing: "-0.04em", lineHeight: 1 }}>{usd(bal)} <span className="mut" style={{ fontSize: 18, fontWeight: 500, letterSpacing: 0 }}>USDC</span></div>
           <On show={p >= 1}>
-            <div className="m" style={{ marginTop: 20, background: "#0b0b0d", border: "1px solid rgba(255,255,255,.08)", borderRadius: 12, padding: "12px 14px", fontSize: 13.5, color: "#c9c9d0", wordBreak: "break-all" }}>7xKQ4tPz9mVd2cYhRb8LwNfA3sUeJgX6qTn1oZk9fKp</div>
+            <div className="m" style={{ marginTop: 20, background: "#f5f5f7", border: "1px solid rgba(0,0,0,.08)", borderRadius: 12, padding: "12px 14px", fontSize: 13.5, color: "#3a3a3c", wordBreak: "break-all" }}>7xKQ4tPz9mVd2cYhRb8LwNfA3sUeJgX6qTn1oZk9fKp</div>
           </On>
           <On show={p >= 2}>
             <div style={{ display: "flex", gap: 10, marginTop: 14, alignItems: "center" }}>
               <span style={{ display: "inline-flex", marginRight: 4 }}>
                 <span className="av" style={{ background: "#f97316" }}>Y</span>
-                <span className="av" style={{ background: "#3b82f6", marginLeft: -8, boxShadow: "0 0 0 2px #0e0e10" }}>D</span>
+                <span className="av" style={{ background: "#3b82f6", marginLeft: -8, boxShadow: "0 0 0 2px #fff" }}>D</span>
               </span>
               <span className="mut" style={{ fontSize: 15 }}>2 signers · 1 approval needed</span>
             </div>
@@ -315,7 +315,7 @@ function Api({ c }: { c: Ctx }) {
   const p = usePhase([3700]);
   return (
     <div className="t-stage">
-      <Browser url="your-server.js" dark>
+      <Browser url="your-server.js">
         <div className="code">
           {L.map((l, i) => (
             <div key={i} className={`g ${shown > i ? "on" : ""}`} style={{ transform: shown > i ? "none" : "translateX(-8px)" }}>{l}</div>
@@ -336,7 +336,7 @@ function Approve() {
   const bal = useCount(1500, 2300, 1400, 2500);
   return (
     <div className="t-stage">
-      <Browser url="pay.loofta.com/partner/portal" dark>
+      <Browser url="pay.loofta.com/partner/portal">
         <div className="t-pad">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
             <div><div style={{ fontWeight: 650, fontSize: 18 }}>Monthly payouts</div><div className="mut" style={{ fontSize: 14.5 }}>5 people · $1,000.00 · created by API</div></div>
@@ -352,8 +352,8 @@ function Approve() {
             ))}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12 }}>
-            <div className="mut" style={{ fontSize: 15 }}>Wallet <b style={{ color: "#ededef", fontVariantNumeric: "tabular-nums" }}>{usd(bal)}</b></div>
-            <div key={p >= 2 ? "x" : "y"} className={`btnx ${p === 2 ? "press" : ""}`} style={{ background: p >= 3 ? "#1f3b2d" : "#ff6a1f", transition: "background .5s", animation: p === 0 ? undefined : p === 2 ? undefined : undefined }}>{p >= 3 ? "Approved" : "Approve and pay"}</div>
+            <div className="mut" style={{ fontSize: 15 }}>Wallet <b style={{ color: "#1d1d1f", fontVariantNumeric: "tabular-nums" }}>{usd(bal)}</b></div>
+            <div key={p >= 2 ? "x" : "y"} className={`btnx ${p === 2 ? "press" : ""}`} style={{ background: p >= 3 ? "#1f9d55" : "#ff6a1f", transition: "background .5s", animation: p === 0 ? undefined : p === 2 ? undefined : undefined }}>{p >= 3 ? "Approved" : "Approve and pay"}</div>
           </div>
         </div>
       </Browser>
@@ -393,7 +393,7 @@ function Withdraw({ c }: { c: Ctx }) {
   const view = p >= 5 ? "sent" : p >= 2 ? "usdc" : "list";
   return (
     <div className="t-stage">
-      <Browser url="pay.loofta.com/withdraw" dark>
+      <Browser url="pay.loofta.com/withdraw">
         <div style={{ zoom: 0.8, position: "relative" }}>
           <WithdrawPage brand={c.s.brand} logo={c.s.logo} fee={f} view={view} enabled={c.s.enabled} hot={p === 1 ? "usdc" : undefined} wallet={view === "usdc" ? wallet : ""} walletFocus />
           {p === 4 && <div className="press" style={{ position: "absolute", left: "50%", bottom: 118, width: 160, height: 44, marginLeft: -80, borderRadius: 16, background: "rgba(255,255,255,.14)" }} />}
@@ -409,7 +409,7 @@ function Earn({ c }: { c: Ctx }) {
   const n = Math.min(5, Math.floor(v / (total / 5) + 0.02));
   return (
     <div className="t-stage">
-      <div className="t-frame dark">
+      <div className="t-frame">
         <div className="t-pad">
           <div className="lbl" style={{ marginTop: 0 }}>Your fees</div>
           <div style={{ fontSize: 64, fontWeight: 650, letterSpacing: "-0.045em", lineHeight: 1, fontVariantNumeric: "tabular-nums", color: "#5fd49c" }}>{usd(v)}</div>
@@ -419,7 +419,7 @@ function Earn({ c }: { c: Ctx }) {
                 <div className="r" style={{ padding: "8px 0" }}>
                   <span className="av" style={{ background: r.c, width: 28, height: 28, fontSize: 12 }}>{r.h}</span>
                   <span className="grow" style={{ fontWeight: 500 }}>{r.who} withdrew</span>
-                  <span style={{ color: "#5fd49c", fontVariantNumeric: "tabular-nums" }}>+{usd(feeFor({ fee: c.s.fee, pct: c.s.pct }, r.amt))}</span>
+                  <span style={{ color: "#1a9d5b", fontVariantNumeric: "tabular-nums" }}>+{usd(feeFor({ fee: c.s.fee, pct: c.s.pct }, r.amt))}</span>
                 </div>
               </On>
             ))}
