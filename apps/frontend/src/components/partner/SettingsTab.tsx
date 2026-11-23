@@ -53,7 +53,7 @@ export function SettingsTab({ orgId }: { orgId: string }) {
     return (
       <>
         <PageHeader crumb="Partner portal / Settings" title="Your page and fees" />
-        {error ? <Notice kind="error">{error}</Notice> : <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>}
+        {error ? <Notice kind="error">{error}</Notice> : <p className="text-[15px] text-[color:var(--pt-ink2,#4F4F57)]">Loading...</p>}
       </>
     );
   }
@@ -175,8 +175,8 @@ export function SettingsTab({ orgId }: { orgId: string }) {
             />
           </Field>
         </div>
-        <p className="text-[15px] text-[#C9C9D0]">
-          On a $100 withdrawal you earn about <span className="text-[#EDEDEF]">{usd(sample)}</span>. It can never exceed 25% of a payout.
+        <p className="text-[15px] text-[#4F4F57]">
+          On a $100 withdrawal you earn about <span className="font-semibold text-[#EA5B30]">{usd(sample)}</span>. It can never exceed 25% of a payout.
         </p>
         {canEdit && (
           <div className="flex justify-end">
@@ -192,42 +192,42 @@ export function SettingsTab({ orgId }: { orgId: string }) {
 
       <SplitSection title="Withdraw page" desc="What your recipients can do on your withdraw page. Everything is on unless you switch it off.">
         <div className="space-y-3">
-          <label className="flex items-start gap-3 rounded-xl border border-white/[0.07] bg-[color:var(--pt-surface,#121214)] p-3.5">
+          <label className={`flex cursor-pointer items-start gap-3.5 rounded-2xl border p-4 transition-colors ${s.show_history !== false ? "border-[#EA5B30]/35 bg-[#FFF6F2]" : "border-black/10 bg-white hover:bg-[#FAFAFB]"}`}>
             <input
               type="checkbox"
-              className="mt-1 h-4 w-4"
+              className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer rounded-md accent-[#EA5B30] disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!canEdit}
               checked={s.show_history !== false}
               onChange={(e) => set("show_history", e.target.checked)}
             />
             <span>
-              <span className="block text-[15px] font-medium text-[#EDEDEF]">Show payout history</span>
-              <span className="block text-[14px] text-[#9C9CA5]">Recipients see the payouts they already withdrew from you. They only ever see their own.</span>
+              <span className="block text-[15px] font-medium text-[#1D1D1F]">Show payout history</span>
+              <span className="block text-[14px] text-[#6E6E73]">Recipients see the payouts they already withdrew from you. They only ever see their own.</span>
             </span>
           </label>
-          <p className="pt-2 text-[14px] text-[#9C9CA5]">Ways to withdraw</p>
+          <p className="pt-2 text-[14px] text-[#6E6E73]">Ways to withdraw</p>
           {METHOD_OPTIONS.map((m) => {
             const off = s.disabled_withdraw_methods ?? [];
             const enabled = !off.includes(m.id);
             // The last route left on cannot be switched off, or recipients would have no way to cash out.
             const last = enabled && METHOD_OPTIONS.length - off.length <= 1;
             return (
-              <label key={m.id} className="flex items-start gap-3 rounded-xl border border-white/[0.07] bg-[color:var(--pt-surface,#121214)] p-3.5">
+              <label key={m.id} className={`flex cursor-pointer items-start gap-3.5 rounded-2xl border p-4 transition-colors ${enabled ? "border-[#EA5B30]/35 bg-[#FFF6F2]" : "border-black/10 bg-white hover:bg-[#FAFAFB]"}`}>
                 <input
                   type="checkbox"
-                  className="mt-1 h-4 w-4"
+                  className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer rounded-md accent-[#EA5B30] disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={!canEdit || last}
                   checked={enabled}
                   onChange={(e) => set("disabled_withdraw_methods", e.target.checked ? off.filter((x) => x !== m.id) : [...off, m.id])}
                 />
                 <span>
-                  <span className="block text-[15px] font-medium text-[#EDEDEF]">{m.label}</span>
-                  <span className="block text-[14px] text-[#9C9CA5]">{m.hint}</span>
+                  <span className="block text-[15px] font-medium text-[#1D1D1F]">{m.label}</span>
+                  <span className="block text-[14px] text-[#6E6E73]">{m.hint}</span>
                 </span>
               </label>
             );
           })}
-          <p className="text-[14px] text-[#9C9CA5]">At least one way must stay on. Recipients always keep their money, this only changes which options your page offers.</p>
+          <p className="text-[14px] text-[#6E6E73]">At least one way must stay on. Recipients always keep their money, this only changes which options your page offers.</p>
         </div>
         {canEdit && (
           <div className="flex justify-end">
@@ -243,9 +243,9 @@ export function SettingsTab({ orgId }: { orgId: string }) {
 
       <SplitSection title="Fee wallet" desc="Where your withdrawal fees are sent.">
         {s.fee_wallet ? (
-          <p className="break-all font-mono text-[15px] text-[#EDEDEF]">{s.fee_wallet}</p>
+          <p className="break-all font-mono text-[15px] text-[#1D1D1F]">{s.fee_wallet}</p>
         ) : (
-          <p className="text-[15px] text-[#C9C9D0]">Not set yet. It is set to your funding wallet the first time you fund a batch, or you can choose another wallet below.</p>
+          <p className="text-[15px] text-[#4F4F57]">Not set yet. It is set to your funding wallet the first time you fund a batch, or you can choose another wallet below.</p>
         )}
         {s.fee_wallet_pending && (
           <div className="space-y-3">
@@ -271,7 +271,7 @@ export function SettingsTab({ orgId }: { orgId: string }) {
             </Btn>
           </div>
         ) : (
-          <p className="text-[14px] text-[#9C9CA5]">Only an owner can change this.</p>
+          <p className="text-[14px] text-[#6E6E73]">Only an owner can change this.</p>
         )}
       </SplitSection>
 
