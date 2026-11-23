@@ -26,7 +26,12 @@ function isMobileViewport() {
 
 export default function LooftaHomePage() {
   useBalanceDeepLinkRedirect();
-  return <HomePage />;
+  // The partner pages live on the app host. On a developer machine they are on the same host, so stay there.
+  const [partnerBase, setPartnerBase] = React.useState("https://pay.loofta.com");
+  React.useEffect(() => {
+    if (/^(localhost|127\.0\.0\.1)/.test(window.location.hostname)) setPartnerBase("");
+  }, []);
+  return <HomePage partnerBase={partnerBase} />;
 }
 
 class HomePage extends React.Component {
@@ -2598,7 +2603,7 @@ class HomePage extends React.Component {
                   color: "#FF6A2A",
                 }}
               >
-                FOR BUSINESS
+                PARTNER PORTAL
               </span>
               <h2
                 style={{
@@ -2610,11 +2615,9 @@ class HomePage extends React.Component {
                   letterSpacing: "-0.055em",
                 }}
               >
-                <span style={{ display: "block" }}>
-                  Onboard the next generation
-                </span>
+                <span style={{ display: "block" }}>Pay your people.</span>
                 <span style={{ display: "block", color: "#66646E" }}>
-                  of crypto users.
+                  They withdraw their way.
                 </span>
               </h2>
               <p
@@ -2626,9 +2629,9 @@ class HomePage extends React.Component {
                   textWrap: "pretty",
                 }}
               >
-                Integrate Loofta and let anyone pay or get paid with nothing but
-                an email, no wallet setup, no drop-off. One SDK, and your users
-                are live.
+                Send USDC by email or social handle, no wallet needed. Your team
+                approves from a shared company wallet, and everyone withdraws on
+                a page with your brand.
               </p>
               <div
                 style={{
@@ -2640,13 +2643,14 @@ class HomePage extends React.Component {
                   color: "#D9D6DE",
                 }}
               >
-                <span>Payouts to email, social handle, wallet, or cash</span>
-                <span>150+ settlement tokens with automatic swaps</span>
-                <span>{"Drop-in SDK & hosted checkout, live in a day"}</span>
+                <span>Batches of up to 1,000 people, one approval</span>
+                <span>Withdraw to USDC, any token, a bank or Private P2P</span>
+                <span>Earn a fee on every withdrawal</span>
+                <span>Dashboard, API and SDK, live in a day</span>
               </div>
               <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                 <a
-                  href="https://pay.loofta.com/partner"
+                  href={`${this.props.partnerBase}/partner/portal`}
                   style={{
                     padding: "18px 30px",
                     borderRadius: "999px",
@@ -2657,10 +2661,10 @@ class HomePage extends React.Component {
                     fontSize: "17px",
                   }}
                 >
-                  Talk to sales
+                  Open the partner portal
                 </a>
                 <a
-                  href="/docs"
+                  href={`${this.props.partnerBase}/partner`}
                   style={{
                     padding: "18px 30px",
                     borderRadius: "999px",
@@ -2692,32 +2696,36 @@ class HomePage extends React.Component {
                 transition: "transform .3s ease-out",
               }}
             >
-              <div style={{ color: "#6E6C78" }}>// send with just an email</div>
+              <div style={{ color: "#6E6C78" }}>// pay a batch, one approval</div>
               <div>
                 <span style={{ color: "#F5B70C" }}>await</span>
                 {" loofta."}
-                <span style={{ color: "#FF8A4A" }}>send</span>
+                <span style={{ color: "#FF8A4A" }}>createBatch</span>
                 {"({"}
               </div>
               <div style={{ paddingLeft: "20px" }}>
-                {"to: "}
-                <span style={{ color: "#86EFAC" }}>"satoshi@gmail.com"</span>,
+                {"label: "}
+                <span style={{ color: "#86EFAC" }}>"November creators"</span>,
               </div>
-              <div style={{ paddingLeft: "20px" }}>
-                {"amount: "}
-                <span style={{ color: "#FF8A4A" }}>50</span>,
+              <div style={{ paddingLeft: "20px" }}>{"rows: ["}</div>
+              <div style={{ paddingLeft: "40px" }}>
+                {"{ email: "}
+                <span style={{ color: "#86EFAC" }}>"helena@studio.de"</span>
+                {", amount: "}
+                <span style={{ color: "#FF8A4A" }}>450</span>
+                {" },"}
               </div>
-              <div style={{ paddingLeft: "20px" }}>
-                {"token: "}
-                <span style={{ color: "#86EFAC" }}>"USDC"</span>,
+              <div style={{ paddingLeft: "40px" }}>
+                {"{ email: "}
+                <span style={{ color: "#86EFAC" }}>"lea@mail.fr"</span>
+                {", amount: "}
+                <span style={{ color: "#FF8A4A" }}>380</span>
+                {" },"}
               </div>
-              <div style={{ paddingLeft: "20px" }}>
-                {"rewards: "}
-                <span style={{ color: "#FF8A4A" }}>true</span>
-              </div>
+              <div style={{ paddingLeft: "20px" }}>{"],"}</div>
               <div>{"});"}</div>
               <div style={{ color: "#6E6C78", marginTop: "16px" }}>
-                {"// -> recipient claims, no wallet needed"}
+                {"// -> your team approves, everyone withdraws their way"}
               </div>
             </div>
           </div>

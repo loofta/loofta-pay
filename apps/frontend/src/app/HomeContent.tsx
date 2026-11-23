@@ -914,188 +914,104 @@ function Earn() {
 
 function Business() {
   const t = useTranslations('MarketingPage');
-  const schedule = [
-    { day: "TUE", date: "14", label: "Payroll · November", amt: "$42,800", status: "in 3 days", active: true },
-    { day: "FRI", date: "17", label: "Contractor batch", amt: "$8,900", status: "queued" },
-    { day: "MON", date: "20", label: "Mod bonuses", amt: "€2,400", status: "queued" },
-  ];
-
-  const recurringBars = [1, 1, 1, 1, 1, 0.7, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4];
-
-  const kycRows: Array<{
-    icon: React.ReactNode;
-    iconBg: string;
-    border: string;
-    bg: string;
-    name: string;
-    meta: string;
-    opacity?: number;
-  }> = [
-      {
-        icon: <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />,
-        iconBg: "bg-emerald-400/15 text-emerald-400",
-        border: "border-emerald-400/25",
-        bg: "bg-emerald-400/[0.06]",
-        name: "Verified · Helena B.",
-        meta: "Passport 🇩🇪 · $2,500 released",
-      },
-      {
-        icon: <span className="text-base md:text-sm">🪪</span>,
-        iconBg: "bg-yellow-500/15",
-        border: "border-yellow-500/25",
-        bg: "bg-yellow-500/[0.05]",
-        name: "Pending KYC · winner@...",
-        meta: "Funds held · claim in 7d",
-      },
-      {
-        icon: <span className="text-[13px]">⏳</span>,
-        iconBg: "bg-white/[0.06]",
-        border: "border-white/[0.06]",
-        bg: "bg-white/[0.02]",
-        name: "Awaiting review · Tom E.",
-        meta: "Submitted 2h ago",
-        opacity: 0.55,
-      },
-    ];
-
-  const invoiceRows = [
-    { label: "Design retainer", amt: "$4,800" },
-    { label: "Additional scope", amt: "$1,200" },
-    { label: "Tax", amt: "$540", muted: true },
-  ];
-
+  // The partner page lives on the app host. On a developer machine stay on that machine.
+  const [partnerUrl, setPartnerUrl] = useState("https://pay.loofta.com/partner");
+  useEffect(() => {
+    if (/^(localhost|127\.0\.0\.1)/.test(window.location.hostname)) setPartnerUrl("/partner");
+  }, []);
   const bulkRows = [
-    { flag: "🇩🇪", name: "Helena B.", method: "Revolut", amt: "€450" },
-    { flag: "🇫🇷", name: "Léa M.", method: "USDC", amt: "$380" },
-    { flag: "🇬🇧", name: "Tom E.", method: "Wise", amt: "£420" },
-    { flag: "🇺🇸", name: "Jordan K.", method: "Venmo", amt: "$520" },
-    { flag: "🇯🇵", name: "Aiko T.", method: "🏦 bank", amt: "¥62,000" },
-    { flag: "🇨🇦", name: "Marcus L.", method: "USDC", amt: "$410" },
+    { icon: "✉️", name: "helena@studio.de", method: "Withdrawn", amt: "$450" },
+    { icon: "✉️", name: "lea@mail.fr", method: "Claimed", amt: "$380" },
+    { icon: "𝕏", name: "@tom_e", method: "Funded", amt: "$420" },
+    { icon: "✉️", name: "jordan@acme.co", method: "Funded", amt: "$520" },
+    { icon: "💬", name: "aiko#4821", method: "Funded", amt: "$300" },
+    { icon: "✉️", name: "marcus@mail.ca", method: "Funded", amt: "$410" },
   ];
+
+  const pill = (text: string, tone: "green" | "amber" | "blue") => (
+    <span
+      className={`rounded-full px-2.5 py-1 font-grotesk text-[11px] font-medium ${
+        tone === "green" ? "bg-emerald-400/15 text-emerald-300" : tone === "amber" ? "bg-yellow-500/15 text-yellow-300" : "bg-sky-400/15 text-sky-300"
+      }`}
+    >
+      {text}
+    </span>
+  );
 
   const features = [
     {
-      icon: "📅",
-      title: t('business.feature0Title'),
-      body: t('business.feature0Body'),
+      icon: "✉️",
+      title: t("business.feature0Title"),
+      body: t("business.feature0Body"),
       preview: (
         <div className="flex flex-col gap-2">
-          {schedule.map((r, i) => (
-            <div
-              key={i}
-              className={`flex items-center gap-3 rounded-[10px] px-3 py-2.5 ${r.active
-                ? "border border-[rgba(255,19,1,0.25)] bg-[rgba(255,19,1,0.08)]"
-                : "border border-white/[0.05] bg-white/[0.03]"
-                }`}
-            >
-              <div
-                className={`flex h-9 w-9 flex-col items-center justify-center rounded-lg ${r.active ? BRAND_GRADIENT : "bg-white/[0.06]"
-                  }`}
-              >
-                <div
-                  className={`font-grotesk text-[8px] font-semibold tracking-[0.08em] ${r.active ? "text-white/80" : "text-slate-500"
-                    }`}
-                >
-                  {r.day}
-                </div>
-                <div className="font-display text-[14px] font-medium leading-none text-white">{r.date}</div>
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-grotesk text-[12px] text-white">{r.label}</div>
-                <div className="font-grotesk text-[10px] text-slate-500">{r.status}</div>
-              </div>
-              <div className="font-display text-[13px] font-medium tabular-nums text-white">{r.amt}</div>
+          {[
+            { who: "helena@studio.de", amt: "$450", tag: pill("Withdrawn", "green") },
+            { who: "@leam on X", amt: "$380", tag: pill("Claimed", "amber") },
+            { who: "tom@mail.co.uk", amt: "$420", tag: pill("Funded", "blue") },
+          ].map((r) => (
+            <div key={r.who} className="flex items-center gap-3 rounded-[10px] border border-white/[0.05] bg-white/[0.03] px-3 py-2.5">
+              <span className="min-w-0 flex-1 truncate font-grotesk text-sm text-white">{r.who}</span>
+              <span className="font-grotesk text-sm tabular-nums text-white">{r.amt}</span>
+              {r.tag}
             </div>
           ))}
         </div>
       ),
     },
     {
-      icon: "🔁",
-      title: t('business.feature1Title'),
-      body: t('business.feature1Body'),
+      icon: "🎨",
+      title: t("business.feature1Title"),
+      body: t("business.feature1Body"),
       preview: (
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-[18px]">
-          <div className="mb-3.5 flex items-baseline justify-between">
-            <span className="font-grotesk text-[11px] uppercase tracking-[0.12em] text-slate-500">Every month · 1st</span>
-            <span className="inline-flex items-center gap-1.5 font-grotesk text-[10px] text-emerald-400">
-              <span className="h-[5px] w-[5px] rounded-full bg-emerald-400 shadow-[0_0_6px_#34D399]" />
-              Active
-            </span>
+        <div className="rounded-2xl border border-white/[0.08] bg-[#0a0a0c]/70 p-4">
+          <div className="mb-3 flex items-center gap-2.5">
+            <div className={`flex h-8 w-8 items-center justify-center rounded-full font-display text-sm font-semibold text-white ${BRAND_GRADIENT}`}>A</div>
+            <div className="font-grotesk text-sm font-medium text-white">Acme payouts</div>
           </div>
-          <div className="mb-1 font-display text-[32px] font-medium leading-none tabular-nums text-white">$12,500</div>
-          <div className="mb-3.5 font-grotesk text-[12px] text-slate-400">→ 8 team members</div>
-          <div className="flex h-7 items-end gap-[3px]">
-            {recurringBars.map((h, i) => (
-              <div
-                key={i}
-                className="flex-1 rounded-sm"
-                style={{
-                  height: `${h * 100}%`,
-                  background:
-                    h === 1
-                      ? "linear-gradient(90deg, #FF1301, #EAB308)"
-                      : h > 0.5
-                        ? "rgba(255,255,255,.25)"
-                        : "rgba(255,255,255,.08)",
-                }}
-              />
+          <div className="mb-3 font-display text-[28px] font-medium tabular-nums text-white">$42.00</div>
+          <div className="flex flex-wrap gap-2">
+            {["USDC", "Any token", "Bank", "Private P2P"].map((m) => (
+              <span key={m} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-grotesk text-[12px] text-slate-300">
+                {m}
+              </span>
             ))}
           </div>
-          <div className="mt-1.5 flex justify-between font-grotesk text-[9px] text-slate-500">
-            <span>Jun</span>
-            <span>Now</span>
-            <span>Next yr</span>
-          </div>
         </div>
       ),
     },
     {
-      icon: "🪪",
-      title: t('business.feature2Title'),
-      body: t('business.feature2Body'),
+      icon: "🔐",
+      title: t("business.feature2Title"),
+      body: t("business.feature2Body"),
       preview: (
-        <div className="flex flex-col gap-2.5">
-          {kycRows.map((r, i) => (
-            <div
-              key={i}
-              className={`flex items-center gap-3 rounded-xl border ${r.border} ${r.bg} p-3`}
-              style={{ opacity: r.opacity ?? 1 }}
-            >
-              <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${r.iconBg}`}>{r.icon}</div>
-              <div className="flex-1">
-                <div className="font-grotesk text-[12px] text-white">{r.name}</div>
-                <div className="font-grotesk text-[10px] text-slate-500">{r.meta}</div>
-              </div>
-            </div>
-          ))}
+        <div className="rounded-2xl border border-white/[0.08] bg-[#0a0a0c]/70 p-4">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="font-grotesk text-sm text-white">Creators, November</span>
+            <span className="font-display text-[18px] font-medium tabular-nums text-white">$12,400</span>
+          </div>
+          <div className="mb-3 font-grotesk text-[12px] text-slate-500">24 people</div>
+          <div className="mb-2 flex items-center gap-2">
+            {["bg-emerald-400/80", "bg-emerald-400/80", "bg-white/15"].map((c, i) => (
+              <span key={i} className={`h-2 flex-1 rounded-full ${c}`} />
+            ))}
+          </div>
+          <div className="font-grotesk text-[12px] text-slate-400">2 of 3 approved</div>
         </div>
       ),
     },
     {
-      icon: "🧾",
-      title: t('business.feature3Title'),
-      body: t('business.feature3Body'),
+      icon: "💸",
+      title: t("business.feature3Title"),
+      body: t("business.feature3Body"),
       preview: (
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-[18px]">
-          <div className="mb-3.5 flex items-center justify-between border-b border-white/[0.05] pb-3">
-            <div>
-              <div className="font-grotesk text-[10px] uppercase tracking-[0.1em] text-slate-500">INV-2047</div>
-              <div className="mt-0.5 font-display text-[14px] font-medium text-white">Acme Corp</div>
-            </div>
-            <span className="rounded-full border border-emerald-400/30 bg-emerald-400/[0.12] px-2 py-[3px] font-grotesk text-[10px] font-semibold text-emerald-400">
-              PAID
-            </span>
-          </div>
-          {invoiceRows.map((r, i) => (
-            <div key={i} className="flex justify-between py-1.5 font-grotesk text-[12px]">
-              <span className={r.muted ? "text-slate-500" : "text-slate-300"}>{r.label}</span>
-              <span className={`tabular-nums ${r.muted ? "text-slate-500" : "text-white"}`}>{r.amt}</span>
-            </div>
-          ))}
-          <div className="mt-2.5 flex items-baseline justify-between border-t border-white/[0.05] pt-2.5">
-            <span className="font-grotesk text-[11px] text-slate-500">Total received</span>
-            <span className="font-display text-[22px] font-medium tabular-nums text-white">$6,540</span>
+        <div className="rounded-2xl border border-white/[0.08] bg-[#0a0a0c]/70 p-4">
+          <div className="mb-1 font-grotesk text-[12px] text-slate-500">Your earnings this month</div>
+          <div className="mb-4 font-display text-[28px] font-medium tabular-nums text-white">$184.20</div>
+          <div className="flex h-12 items-end gap-1.5">
+            {[0.3, 0.45, 0.4, 0.6, 0.55, 0.8, 1].map((h, i) => (
+              <span key={i} className={`flex-1 rounded-sm ${i === 6 ? BRAND_GRADIENT : "bg-white/10"}`} style={{ height: `${h * 100}%` }} />
+            ))}
           </div>
         </div>
       ),
@@ -1128,9 +1044,7 @@ function Business() {
             </p>
           </div>
           <a
-            href="https://calendly.com/lisa-bechina"
-            target="_blank"
-            rel="noopener noreferrer"
+            href={partnerUrl}
             className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-base md:text-sm whitespace-nowrap"
           >
             {t('business.bookDemo')} <ArrowRight className="h-[15px] w-[15px]" strokeWidth={2} />
@@ -1173,8 +1087,8 @@ function Business() {
                   📄
                 </div>
                 <div>
-                  <div className="font-grotesk text-[12px] font-medium text-white">contractors-nov.csv</div>
-                  <div className="font-grotesk text-[10px] text-slate-500">24 recipients · 5 currencies</div>
+                  <div className="font-grotesk text-[12px] font-medium text-white">creators-nov.csv</div>
+                  <div className="font-grotesk text-[10px] text-slate-500">24 recipients · 1 approval</div>
                 </div>
               </div>
               <span className="font-display text-[18px] font-medium tabular-nums text-white">$12,400</span>
@@ -1185,14 +1099,14 @@ function Business() {
                 className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-3.5 px-[18px] py-[11px] font-grotesk text-sm ${i < bulkRows.length - 1 ? "border-b border-white/[0.04]" : ""
                   }`}
               >
-                <span className="w-5 text-center text-base">{r.flag}</span>
+                <span className="w-5 text-center text-base">{r.icon}</span>
                 <span className="text-white">{r.name}</span>
                 <span className="text-[11px] text-slate-500">{r.method}</span>
                 <span className="min-w-[68px] text-right tabular-nums text-white">{r.amt}</span>
               </div>
             ))}
             <div className="bg-white/[0.02] px-[18px] py-2.5 text-center font-grotesk text-[11px] text-slate-500">
-              + 18 more · <span className="text-slate-300">1 signature to send all</span>
+              + 18 more · <span className="text-slate-300">one approval to send all</span>
             </div>
           </div>
         </motion.div>
@@ -1242,7 +1156,7 @@ function Business() {
           </div>
           <div className="relative flex flex-wrap gap-3">
             <Link
-              href={APP_URL}
+              href={partnerUrl}
               className={`inline-flex items-center gap-2.5 rounded-full font-display font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] px-8 py-[18px] text-[17px] ${BRAND_GRADIENT}`}
             >
               {t('business.contactSales')} <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2} />
