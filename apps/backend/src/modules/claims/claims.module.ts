@@ -1,3 +1,4 @@
+import { LightCompressionService } from '@/common/light-compression.service';
 import { Module, forwardRef } from '@nestjs/common';
 import { ClaimsController } from './claims.controller';
 import { AdminClaimsController } from './admin-claims.controller';
@@ -15,7 +16,7 @@ import { PajCashModule } from '../paj-cash/paj-cash.module';
 @Module({
   imports: [IntentsModule, UsersModule, forwardRef(() => CronModule), forwardRef(() => SendPaymentModule), EmailModule, MagicblockQuestModule, PajCashModule],
   controllers: [ClaimsController, AdminClaimsController],
-  providers: [ClaimsService, DepositService, SolanaSponsorService],
-  exports: [ClaimsService, DepositService, SolanaSponsorService],
+  providers: [ClaimsService, DepositService, SolanaSponsorService, LightCompressionService],
+  exports: [ClaimsService, DepositService, SolanaSponsorService, LightCompressionService],
 })
 export class ClaimsModule {}

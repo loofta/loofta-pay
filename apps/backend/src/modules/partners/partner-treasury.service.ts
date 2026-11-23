@@ -20,6 +20,8 @@ import { UsersService } from '@/modules/users/users.service';
 import { ClaimsService } from '@/modules/claims/claims.service';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
+import { ATA_RENT_LAMPORTS } from '@/common/ata-rent-recovery';
+import { COMPRESS_PER_TX, compressedPayoutsEnabledFor } from '@/common/light-compression.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { PartnersService, Partner } from './partners.service';
 import { PartnerRole, can } from './partner-roles';
@@ -47,6 +49,8 @@ type ProposalRow = {
   create_signature: string | null;
   execute_signature: string | null;
   created_at: string;
+  staged_usdc?: number | null;
+  compress_status?: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | null;
 };
 type UnsignedTx = { proposal_id: string; unsigned_transaction: string; transaction_version: 'v0' };
 
@@ -399,6 +403,23 @@ export class PartnerTreasuryService {
     return { row, approved: chain.approved.map((k) => k.toBase58()), rejected: chain.rejected.map((k) => k.toBase58()) };
   }
 
+  /**
+   * For the compressed funding job: reads one proposal's state from the chain and mirrors it into the table, the same
+   * thing the portal does when someone looks at the wallet tab. Returns the fresh status, or null if it is gone.
+   */
+  async refreshProposalStatus(proposalId: string): Promise<ProposalRow['status'] | null> {
+    const { data: row } = await this.supabase.partnerTreasuryProposals.select('*').eq('id', proposalId).maybeSingle();
+    if (!row) return null;
+    const proposal = row as ProposalRow;
+    if (!['draft', 'active', 'approved'].includes(proposal.status)) return proposal.status;
+    const { data: partner } = await this.supabase.partners.select('*').eq('id', proposal.partner_id).maybeSingle();
+    if (!partner) return null;
+    const conn = this.conn();
+    const ms = await this.fetchMultisig(conn, this.chainOf(partner as Partner).msPda);
+    const synced = await this.syncOne(partner as Partner, ms, conn, proposal);
+    return synced ? synced.row.status : null;
+  }
+
   /** After a member change is executed, record who is now a signer and the new threshold. */
   private async applyConfigResult(partner: Partner, ms: Awaited<ReturnType<PartnerTreasuryService['fetchMultisig']>>, row: ProposalRow) {
     const onchain = new Set(ms.members.map((m) => m.key.toBase58()));
@@ -659,7 +680,11 @@ export class PartnerTreasuryService {
       const targets = await this.claims.getPartnerPayoutTargets(remaining, partner.id);
       const vaultAta = await getAssociatedTokenAddress(mint, vault, true);
       const sponsorAta = await getAssociatedTokenAddress(mint, sponsorKp.publicKey);
-      const burnerAtas = await Promise.all(targets.map((t) => getAssociatedTokenAddress(mint, new PublicKey(t.burner))));
+      // Compressed mode (flag): ONE transfer to our staging account for the whole batch; the money is then
+      // compressed into the burners by our own job, so there are no token accounts and no size limit per proposal.
+      // Old mode: a transfer to every burner's token account, as many per proposal as fit one transaction.
+      const compressed = compressedPayoutsEnabledFor(this.config, partner.id);
+      const burnerAtas = compressed ? [] : await Promise.all(targets.map((t) => getAssociatedTokenAddress(mint, new PublicKey(t.burner))));
 
       // Fees for this proposal's transactions: create, the other approvals, execute. Two signatures
       // each at 5,000 lamports, doubled for headroom. Never free, even when the price feed is down.
@@ -669,10 +694,12 @@ export class PartnerTreasuryService {
 
       const transactionIndex = await this.claimIndex(partner.id, conn, msPda);
       const build = (count: number) => {
-        const ixs = [
-          ...targets.slice(0, count).map((t, i) => createTransferInstruction(vaultAta, burnerAtas[i], vault, t.baseUnits, [], TOKEN_PROGRAM_ID)),
-          createTransferInstruction(vaultAta, sponsorAta, vault, gasUnits, [], TOKEN_PROGRAM_ID),
-        ];
+        const ixs = compressed
+          ? [createTransferInstruction(vaultAta, sponsorAta, vault, targets.reduce((a, t) => a + t.baseUnits, 0) + gasUnits, [], TOKEN_PROGRAM_ID)]
+          : [
+              ...targets.slice(0, count).map((t, i) => createTransferInstruction(vaultAta, burnerAtas[i], vault, t.baseUnits, [], TOKEN_PROGRAM_ID)),
+              createTransferInstruction(vaultAta, sponsorAta, vault, gasUnits, [], TOKEN_PROGRAM_ID),
+            ];
         const transactionMessage = new TransactionMessage({ payerKey: vault, recentBlockhash: PLACEHOLDER_BLOCKHASH, instructions: ixs });
         return [
           multisig.instructions.vaultTransactionCreate({
@@ -691,27 +718,45 @@ export class PartnerTreasuryService {
         }
       };
       let count = 1;
-      while (count < targets.length && sizeOf(count + 1) <= MAX_TX_BYTES) count++;
-      if (sizeOf(count) > MAX_TX_BYTES) throw new BadRequestException('A single payout does not fit in a transaction.');
+      if (compressed) count = targets.length;
+      else while (count < targets.length && sizeOf(count + 1) <= MAX_TX_BYTES) count++;
+      if (sizeOf(count) > MAX_TX_BYTES) throw new BadRequestException(compressed ? 'This batch is too large for one proposal.' : 'A single payout does not fit in a transaction.');
 
       const chunk = targets.slice(0, count);
-      const totalBase = chunk.reduce((a, t) => a + t.baseUnits, 0) + gasUnits;
+      const payoutBase = chunk.reduce((a, t) => a + t.baseUnits, 0);
+      const totalBase = payoutBase + gasUnits;
       const balance = await conn.getTokenAccountBalance(vaultAta, 'confirmed').then((r) => Number(r.value.amount)).catch(() => 0);
       if (balance < totalBase) {
-        const payoutBase = chunk.reduce((a, t) => a + t.baseUnits, 0);
         const usdc = (n: number) => (n / 1e6).toFixed(n % 10_000 === 0 ? 2 : 4);
         throw new BadRequestException(
           `The company wallet has ${usdc(balance)} USDC. This step needs ${usdc(payoutBase)} for the payouts plus ${usdc(gasUnits)} for network fees, ${usdc(totalBase)} in total. Add at least ${usdc(totalBase - balance + 10_000)} USDC to the company wallet first.`,
         );
       }
 
-      // The token accounts for the burners and for our fee are created by our fee payer, outside the vault
-      // transaction (the vault holds no SOL). Burner rent is recovered when the payout is swept.
-      await this.ensureTokenAccounts(conn, mint, [sponsorKp.publicKey, ...chunk.map((t) => new PublicKey(t.burner))]);
+      // Our fee payer advances SOL for the proposal's accounts (and, in the old mode, the burners' token accounts).
+      // If it is too low, say so plainly instead of failing half way, and shout in the logs so it gets topped up.
+      const atasToMake = compressed ? [sponsorAta] : [sponsorAta, ...burnerAtas.slice(0, count)];
+      const existing = await conn.getMultipleAccountsInfo(atasToMake, 'confirmed').catch(() => null);
+      const missing = existing ? existing.filter((a) => !a).length : atasToMake.length;
+      const compressFees = compressed ? Math.ceil(chunk.length / COMPRESS_PER_TX) * 30_000 : 0; // the compress transactions after approval
+      const neededLamports = missing * ATA_RENT_LAMPORTS + 6_000_000 + compressFees; // 6,000,000: proposal accounts and fees, with headroom
+      const sponsorLamports = await conn.getBalance(sponsorKp.publicKey, 'confirmed');
+      if (sponsorLamports < neededLamports) {
+        this.logger.error(`Loofta fee payer is low on SOL: ${sponsorLamports / 1e9} SOL, a payout step needs about ${neededLamports / 1e9}. Top it up.`);
+        throw new ServiceUnavailableException('Payouts are temporarily unavailable. Please try again in a little while.');
+      }
+
+      // Token accounts are created by our fee payer, outside the vault transaction (the vault holds no SOL).
+      // Old mode: one per burner, rent recovered when the payout is swept. Compressed mode: only our staging account.
+      await this.ensureTokenAccounts(conn, mint, compressed ? [sponsorKp.publicKey] : [sponsorKp.publicKey, ...chunk.map((t) => new PublicKey(t.burner))]);
 
       const { count: previous } = await this.supabase.partnerTreasuryProposals.select('id', { count: 'exact', head: true }).eq('partner_id', partner.id).eq('batch_id', batchId);
       const paymentIds = chunk.map((t) => t.claimId);
       await this.supabase.payments.update({ sender_user_id: userId }).in('id', paymentIds);
+      // Which kind of burner holds each payout. Separate from the update above so an old database without the column
+      // (migration not run yet) never blocks the old mode; an error here is ignored on purpose when the flag is off.
+      const flagged = await this.supabase.payments.update({ burner_compressed: compressed }).in('id', paymentIds);
+      if (compressed && flagged.error) throw new ServiceUnavailableException('Payouts are temporarily unavailable. Please try again in a little while.');
       const proposalId = await this.insertProposal({
         partner_id: partner.id,
         kind: 'payout',
@@ -722,9 +767,10 @@ export class PartnerTreasuryService {
         summary: {
           label: batch.label,
           payouts: chunk.length,
-          total_usdc: Math.round(chunk.reduce((a, t) => a + t.baseUnits, 0)) / 1e6,
+          total_usdc: Math.round(payoutBase) / 1e6,
           gas_usdc: gasUnits / 1e6,
         },
+        ...(compressed ? { staged_usdc: payoutBase / 1e6, compress_status: 'pending' } : {}),
         created_by_user_id: userId,
       });
       const unsigned = await this.buildTx(build(count));

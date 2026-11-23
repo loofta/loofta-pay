@@ -32,7 +32,7 @@ const pay = (id: string, amount: number, burner: string, registered = false): Pa
 /** A stand-in for the supabase builder. Every call returns itself; awaiting it gives `result`. */
 function chain(result: unknown, spy?: (name: string, v: unknown) => void) {
   const c: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'is', 'not', 'order', 'limit']) c[m] = () => c;
+  for (const m of ['select', 'eq', 'is', 'not', 'order', 'limit', 'in']) c[m] = () => c;
   c.update = (v: unknown) => (spy?.('update', v), c);
   c.maybeSingle = async () => result;
   c.single = async () => result;
@@ -50,8 +50,11 @@ function make(opts: {
   feeWalletReady?: boolean;
   siblingWithdrawn?: boolean;
   history?: Array<Record<string, unknown>>;
+  historyItems?: Array<{ payment_id: string; batch_id: string }>;
+  historyBatches?: Array<{ id: string; label: string | null }>;
   historyError?: boolean;
   rates?: { flatUsd: number; bps: number };
+  compressed?: Record<string, bigint>; // burner address -> compressed balance; turns the compressed feature on
 } = {}) {
   const partner = { ...basePartner, ...(opts.partner ?? {}) };
   const payments = opts.payments ?? [pay('a', 10, B1)];
@@ -66,13 +69,15 @@ function make(opts: {
   let sibling = false;
   let hist = false;
   const historyFilters: Array<[string, unknown]> = [];
-  paymentsTable.in = () => { sibling = true; return paymentsTable; };
+  let flagRead = false;
+  paymentsTable.in = (col: string) => { if (col === 'id') flagRead = true; else sibling = true; return paymentsTable; };
   paymentsTable.eq = (col: string, val: string) => {
     if (col === 'id') currentId = val;
     if (col === 'recipient_user_id') { hist = true; historyFilters.push([col, val]); }
     return paymentsTable;
   };
   paymentsTable.then = (res: (v: unknown) => unknown) => {
+    if (flagRead) { flagRead = false; return Promise.resolve({ data: payments.filter((p) => opts.compressed && p.burner_address in opts.compressed).map((p) => ({ id: p.id, burner_compressed: true })), error: null }).then(res); }
     if (hist) { hist = false; return Promise.resolve(opts.historyError ? { data: null, error: { message: 'x' } } : { data: opts.history ?? [], error: null }).then(res); }
     if (sibling) { sibling = false; return Promise.resolve({ data: opts.siblingWithdrawn ? [{ id: 'done' }] : [], error: null }).then(res); }
     const isStamp = '__pending' in stamps;
@@ -86,6 +91,8 @@ function make(opts: {
   const supabase = {
     partners: chain({ data: partner }),
     payments: paymentsTable,
+    payoutBatchItems: chain({ data: opts.historyItems ?? [], error: null }),
+    payoutBatches: chain({ data: opts.historyBatches ?? [], error: null }),
   };
   const claims = {
     checkIsRecipient: jest.fn(async (id: string) => ({ isRecipient: !opts.notRecipient?.includes(id) })),
@@ -101,10 +108,11 @@ function make(opts: {
     audit: jest.fn(),
   };
   const sponsor = { getConnectionForCluster: () => ({}) };
-  const config = { get: (k: string) => (k === 'SOLANA_CLUSTER' ? 'mainnet-beta' : undefined) };
+  const config = { get: (k: string) => (k === 'SOLANA_CLUSTER' ? 'mainnet-beta' : k === 'PARTNER_COMPRESSED_PAYOUTS' && opts.compressed ? 'true' : undefined) };
+  const light = { compressedBalance: jest.fn(async (_c: string, owner: { toBase58(): string }) => (opts.compressed ?? {})[owner.toBase58()] ?? BigInt(0)) };
   const feeSettings = { get: async () => opts.rates ?? { flatUsd: 0.05, bps: 30 } };
-  const svc = new PartnerWithdrawService(supabase as never, config as never, partnersSvc as never, claims as never, sponsor as never, feeSettings as never);
-  return { svc, events, stamps, claims, partnersSvc, historyFilters };
+  const svc = new PartnerWithdrawService(supabase as never, config as never, partnersSvc as never, claims as never, sponsor as never, feeSettings as never, light as never);
+  return { svc, light, events, stamps, claims, partnersSvc, historyFilters };
 }
 
 describe('partner withdraw quote', () => {
@@ -357,6 +365,29 @@ describe('flat fee on a retried withdrawal', () => {
   });
 });
 
+describe('compressed payouts', () => {
+  it('a payout held as a compressed balance counts as funded when the burner holds enough', async () => {
+    const { svc, light } = make({ payments: [pay('a', 10, B1)], balances: {}, compressed: { [B1]: BigInt(10_000_000) } });
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.gross_usdc).toBe(10);
+    expect(q.can_withdraw).toBe(true);
+    expect(light.compressedBalance).toHaveBeenCalledTimes(1);
+  });
+
+  it('a compressed payout whose burner holds too little is still processing, never available', async () => {
+    const { svc } = make({ payments: [pay('a', 10, B1)], balances: {}, compressed: { [B1]: BigInt(5_000_000) } });
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.gross_usdc).toBe(0);
+    expect(q.can_withdraw).toBe(false);
+  });
+
+  it('an old payout next to a compressed one is still read from its token account', async () => {
+    const { svc } = make({ payments: [pay('a', 10, B1), pay('b', 10, B2)], balances: { [B2]: BigInt(10_000_000) }, compressed: { [B1]: BigInt(10_000_000) } });
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.gross_usdc).toBe(20);
+  });
+});
+
 describe('withdraw history', () => {
   const past = { id: 'old', amount: 50, description: 'Spring', created_at: '2026-10-01T00:00:00Z', partner_withdrawn_at: '2026-10-02T00:00:00Z', partner_fee_usdc: 1.5 };
 
@@ -366,6 +397,13 @@ describe('withdraw history', () => {
     expect(q.history_enabled).toBe(true);
     expect(q.history).toEqual([{ payment_id: 'old', amount: 50, message: 'Spring', received_at: past.created_at, withdrawn_at: past.partner_withdrawn_at, partner_fee_usdc: 1.5 }]);
     expect(historyFilters).toEqual([['recipient_user_id', 'u1']]);
+  });
+
+  it('dates a payout by when the partner sent it and titles it with the batch name when there is no note', async () => {
+    const row = { id: 'p1', amount: 1, description: null, created_at: '2026-11-20T08:00:00Z', paid_at: '2026-11-21T09:00:00Z', partner_withdrawn_at: '2026-11-23T10:00:00Z', partner_fee_usdc: 0 };
+    const { svc } = make({ history: [row], historyItems: [{ payment_id: 'p1', batch_id: 'b1' }], historyBatches: [{ id: 'b1', label: 'November bonuses' }] });
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.history[0]).toMatchObject({ message: 'November bonuses', received_at: '2026-11-21T09:00:00Z', withdrawn_at: '2026-11-23T10:00:00Z' });
   });
 
   it('returns no history, and does not even query it, when the partner hides it', async () => {

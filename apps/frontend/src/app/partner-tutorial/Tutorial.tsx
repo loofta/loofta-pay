@@ -216,6 +216,11 @@ function Intro() {
         <p style={{ margin: 0, maxWidth: "40em", fontSize: "clamp(16px,min(1.4vw,2.2vh),20px)", lineHeight: 1.5, color: "#6E6E73" }}>
           See how a platform pays hundreds of people in one click, with no accounts, no wallets and no forms for them to fill in. Two minutes, start to finish.
         </p>
+        <div className="t-pills">
+          <span><b>1 call</b> pays everyone</span>
+          <span><b>0</b> accounts to create</span>
+          <span><b>Your fee</b> on every withdrawal</span>
+        </div>
       </div>
       <IntroStage />
     </>
@@ -472,8 +477,8 @@ export function Tutorial() {
       <div className="t-top">
         <a href="/partner" aria-label="Loofta partners" style={{ padding: 0 }}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/loofta.svg" alt="Loofta" style={{ height: 26, width: "auto", display: "block" }} /></a>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <a href={WITHDRAW_DEMO_HREF}>Withdraw page demo</a>
-          <a className="pill" href={PORTAL_HREF}>Try now</a>
+          <a href={WITHDRAW_DEMO_HREF}>Example store</a>
+          <a className="pill" href={PORTAL_HREF}>Try it live</a>
         </span>
       </div>
       <div className="t-body">
@@ -514,15 +519,10 @@ export function Tutorial() {
         <div className="t-dots">
           {Array.from({ length: total }).map((_, n) => <button key={n} aria-label={`Step ${n + 1}`} className={n === i ? "on" : ""} onClick={() => go(n)} />)}
         </div>
-        <div className="stats3" style={{ marginTop: 0, visibility: i === 0 ? "visible" : "hidden" }}>
-          <div><b>1 call</b><span>pays everyone</span></div>
-          <div><b>0</b><span>accounts to create</span></div>
-          <div><b>Your fee</b><span>on every withdrawal</span></div>
-        </div>
         <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "flex-end" }}>
           <span className="t-key">Use the arrow keys</span>
           {i > 0 && <button className="t-btn light" onClick={() => go(i - 1)}>Back</button>}
-          {!end && <button className="t-btn" onClick={() => go(i + 1)}>{i === 0 ? "Start the tutorial" : "Next"}</button>}
+          {!end && <button className="t-btn" onClick={() => go(i + 1)}>{i === 0 ? "Start the tour" : "Next"}</button>}
         </div>
       </div>
     </div>

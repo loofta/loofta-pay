@@ -112,7 +112,7 @@ function History({ items }: { items: HistoryItem[] }) {
           <li key={h.payment_id} className="flex items-center justify-between gap-3 py-3">
             <span className="min-w-0">
               <span className="block truncate text-base text-[color:var(--pt-ink,#fff)]">{h.message || "Payout"}</span>
-              <span className="block text-sm text-[color:var(--pt-ink3,#8A8893)]">Sent {dayFmt(h.withdrawn_at)}</span>
+              <span className="block text-sm text-[color:var(--pt-ink3,#8A8893)]">Sent {dayFmt(h.received_at)} · Withdrawn {dayFmt(h.withdrawn_at)}</span>
             </span>
             <span className="shrink-0 text-base font-semibold text-[color:var(--pt-ink,#fff)]">{usd(h.amount)}</span>
           </li>

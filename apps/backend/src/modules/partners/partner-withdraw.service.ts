@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PublicKey } from '@solana/web3.js';
 import { getAccount, getAssociatedTokenAddress } from '@solana/spl-token';
@@ -7,6 +7,7 @@ import { buildFeeLines, allocateLines, publicLines, type PublicFeeLine } from '.
 import { ClaimsService } from '@/modules/claims/claims.service';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
+import { LightCompressionService } from '@/common/light-compression.service';
 import { isValidSolanaAddress } from '@/common/solana-address';
 import { PartnersService, Partner, PublicPartner } from './partners.service';
 import { allocateFeeUnits, computeLooftaWithdrawFeeUsdc, computePartnerFeeUsdc, P2P_MIN_USD, P2P_RATE_PERCENT } from './partner-fee';
@@ -76,6 +77,7 @@ export class PartnerWithdrawService {
     private readonly claims: ClaimsService,
     private readonly sponsor: SolanaSponsorService,
     private readonly feeSettings: PartnerFeeSettingsService,
+    @Optional() private readonly light: LightCompressionService | null = null,
   ) {}
 
   private get isDevnet() {
@@ -115,6 +117,17 @@ export class PartnerWithdrawService {
 
     const conn = this.sponsor.getConnectionForCluster(this.isDevnet ? 'devnet' : 'mainnet');
     const mint = this.usdcMint();
+    // Which payouts hold a compressed balance. Read separately, and a database without the column (migration not run
+    // yet, error 42703) is treated as "none", so it can never break the normal list.
+    const compressedIds = new Set<string>();
+    if (data?.length) {
+      const { data: flagged, error: flagErr } = await this.supabase.payments.select('id, burner_compressed').in('id', data.map((p) => p.id as string));
+      if (flagErr && flagErr.code !== '42703') {
+        this.logger.error(`Partner withdraw: could not read compressed flags for partner ${partner.id}: ${flagErr.message}`);
+        throw new ServiceUnavailableException('Withdrawals are temporarily unavailable. Please try again soon.');
+      }
+      for (const r of flagged ?? []) if ((r as { burner_compressed?: boolean | null }).burner_compressed === true) compressedIds.add(r.id as string);
+    }
     const rows: Array<PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }> = [];
     for (const p of data ?? []) {
       if ((p.is_devnet === true) !== this.isDevnet) continue;
@@ -124,8 +137,14 @@ export class PartnerWithdrawService {
       const units = toUnits(Number(p.amount));
       let funded = false;
       try {
-        const ata = await getAssociatedTokenAddress(mint, new PublicKey(p.burner_address as string), true);
-        funded = (await getAccount(conn, ata, 'confirmed')).amount >= units;
+        if (compressedIds.has(p.id as string)) {
+          // Compressed payout: the burner holds a compressed balance, not a token account. If the indexer is down this
+          // simply shows as "processing" for now; it never looks funded when it is not.
+          funded = !!this.light && (await this.light.compressedBalance(this.isDevnet ? 'devnet' : 'mainnet', new PublicKey(p.burner_address as string), mint)) >= units;
+        } else {
+          const ata = await getAssociatedTokenAddress(mint, new PublicKey(p.burner_address as string), true);
+          funded = (await getAccount(conn, ata, 'confirmed')).amount >= units;
+        }
       } catch {
         funded = false;
       }
@@ -198,7 +217,7 @@ export class PartnerWithdrawService {
    */
   private async findHistory(partner: Partner, userId: string): Promise<HistoryView[]> {
     const { data, error } = await this.supabase.payments
-      .select('id, amount, description, created_at, partner_withdrawn_at, partner_fee_usdc')
+      .select('id, amount, description, created_at, paid_at, partner_withdrawn_at, partner_fee_usdc')
       .eq('partner_id', partner.id)
       .eq('recipient_user_id', userId)
       .not('partner_withdrawn_at', 'is', null)
@@ -208,11 +227,28 @@ export class PartnerWithdrawService {
       this.logger.error(`Partner withdraw: could not load history for partner ${partner.id}: ${error.message}`);
       throw new ServiceUnavailableException('Withdrawals are temporarily unavailable. Please try again soon.');
     }
+    // The title is the partner's own note for the payout, else the name of the batch it was paid in.
+    // Labels are only ever read for this partner's batches. A lookup failure just falls back to no title.
+    const labelOf = new Map<string, string>();
+    const ids = (data ?? []).map((r) => r.id as string);
+    if (ids.length) {
+      const { data: items } = await this.supabase.payoutBatchItems.select('payment_id, batch_id').in('payment_id', ids);
+      const batchIds = [...new Set((items ?? []).map((i) => i.batch_id as string))];
+      if (batchIds.length) {
+        const { data: batches } = await this.supabase.payoutBatches.select('id, label').eq('partner_id', partner.id).in('id', batchIds);
+        const names = new Map((batches ?? []).filter((b) => b.label).map((b) => [b.id as string, b.label as string]));
+        for (const i of items ?? []) {
+          const name = names.get(i.batch_id as string);
+          if (name) labelOf.set(i.payment_id as string, name);
+        }
+      }
+    }
     return (data ?? []).map((r) => ({
       payment_id: r.id as string,
       amount: Number(r.amount) || 0,
-      message: (r.description as string | null) ?? null,
-      received_at: r.created_at as string,
+      message: (r.description as string | null) || labelOf.get(r.id as string) || null,
+      // When the partner sent it (funded), not when the person withdrew it. Falls back to when it was created.
+      received_at: ((r.paid_at as string | null) || (r.created_at as string)) as string,
       withdrawn_at: r.partner_withdrawn_at as string,
       partner_fee_usdc: Number(r.partner_fee_usdc) || 0,
     }));

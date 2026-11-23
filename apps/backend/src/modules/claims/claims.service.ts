@@ -45,6 +45,7 @@ import { PajCashBankService } from '../paj-cash/paj-cash-bank.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
+import { LightCompressionService } from '@/common/light-compression.service';
 import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
 import { AsyncLocalStorage } from 'async_hooks';
 import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
@@ -140,6 +141,7 @@ export class ClaimsService {
     private readonly pajCashBank: PajCashBankService,
     private readonly pajCashOrders: PajCashOrdersService,
     @Optional() private readonly redisService: RedisService | null = null,
+    @Optional() private readonly lightCompression: LightCompressionService | null = null,
   ) {
     const defaultUsdcMint = isSolanaDevnetFromConfig(this.configService)
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
@@ -2804,6 +2806,8 @@ export class ClaimsService {
       .in('status', ['SUCCESS', 'CANCELLED'])
       .not('burner_address', 'is', null)
       .not('burner_encrypted_secret', 'is', null)
+      // A funded partner payout is marked SUCCESS before the person withdraws it, but its money is still in the burner.
+      .or('partner_id.is.null,partner_withdrawn_at.not.is.null')
       .eq('is_devnet', false)
       .is('burner_reclaimed_at', null)
       .order('created_at', { ascending: true })
@@ -2910,6 +2914,14 @@ export class ClaimsService {
       const isCrossChain = await this.isCrossChainPayment(claimId);
       if (partnerId && (isCrossChain || claim.is_private === true)) {
         throw new BadRequestException('This partner payout cannot be withdrawn through that route. Please contact support.');
+      }
+      // Compressed partner payout: the burner holds a compressed balance, not a token account. See
+      // docs/proposals/PARTNER_COMPRESSED_PAYOUTS.md. Old payouts keep the token-account path below.
+      if (partnerId && (claim as { burner_compressed?: boolean | null }).burner_compressed === true) {
+        return await this.sweepCompressedPartnerBurner({
+          claimId, claim, destination, burnerKeypair, conn, claimMint, partnerId, partnerFeeUnits, partnerFeeWallet, stampedLooftaFeeUnits,
+          cluster: this.resolveClaimNetwork(claim).cluster,
+        });
       }
       if (isCrossChain && claim.is_private === true) {
         const result = await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: true });
@@ -3121,22 +3133,7 @@ export class ClaimsService {
         // Loofta's own fee only: callers record this against the Naira order, and the partner's cut is
         // tracked separately in partner_earnings.
         if (looftaBaseFeeUnits > BigInt(0)) feeAmountUsdc = Number(looftaBaseFeeUnits) / 1_000_000;
-        if (partnerId) {
-          // Set where the money actually moves, so every sweep path (recipient, retry, cron) marks it.
-          const { error: markErr } = await this.supabaseService.payments
-            .update({ partner_withdrawn_at: new Date().toISOString() }).eq('id', claimId);
-          if (markErr) this.logger.error(`CRITICAL partner payout swept but not marked withdrawn payment=${claimId}: ${markErr.message}`);
-        }
-        if (partnerId) {
-          this.recordPartnerPayoutEvent(claimId, 'payout.withdrawn', {
-            partner_fee_usdc: Number(partnerFeeUnits) / 1_000_000,
-            net_usdc: Number(netUnits) / 1_000_000,
-            tx_hash: sig,
-          }).catch((e) => this.logger.warn(`Partner withdrawn event failed for payment ${claimId}: ${(e as Error)?.message}`));
-        }
-        if (partnerId && partnerFeeUnits > BigInt(0)) {
-          await this.recordPartnerEarning(claimId, partnerId, Number(partnerFeeUnits) / 1_000_000, partnerFeeWallet!, sig, (claim as { is_devnet?: boolean | null }).is_devnet === true);
-        }
+        if (partnerId) await this.finishPartnerSweep(claimId, claim, partnerId, partnerFeeUnits, partnerFeeWallet, netUnits, sig);
       } else if (perWithdraw.attempted && !perWithdraw.success) {
         // PER deposit existed but we could not withdraw – do not silently succeed.
         throw new Error(
@@ -3174,6 +3171,156 @@ export class ClaimsService {
     // Both branches that can set sweepTxHash here (the direct SPL sweep and the already-landed-sweep
     // recovery) are always plain public transfers — private delivery returns earlier, above.
     return { sweepTxHash, sweptAmount, feeAmountUsdc, deliveredPrivately: false };
+  }
+
+  /**
+   * What happens after a partner payout's money has really moved: mark it withdrawn, queue the webhook event and
+   * record the partner's earning. Shared by the token-account sweep and the compressed sweep. Set where the money
+   * actually moves, so every sweep path (recipient, retry, cron) marks it.
+   */
+  private async finishPartnerSweep(
+    claimId: string,
+    claim: Claim,
+    partnerId: string,
+    partnerFeeUnits: bigint,
+    partnerFeeWallet: string | null,
+    netUnits: bigint,
+    sig: string,
+  ): Promise<void> {
+    const { error: markErr } = await this.supabaseService.payments
+      .update({ partner_withdrawn_at: new Date().toISOString() }).eq('id', claimId);
+    if (markErr) this.logger.error(`CRITICAL partner payout swept but not marked withdrawn payment=${claimId}: ${markErr.message}`);
+    this.recordPartnerPayoutEvent(claimId, 'payout.withdrawn', {
+      partner_fee_usdc: Number(partnerFeeUnits) / 1_000_000,
+      net_usdc: Number(netUnits) / 1_000_000,
+      tx_hash: sig,
+    }).catch((e) => this.logger.warn(`Partner withdrawn event failed for payment ${claimId}: ${(e as Error)?.message}`));
+    if (partnerFeeUnits > BigInt(0)) {
+      await this.recordPartnerEarning(claimId, partnerId, Number(partnerFeeUnits) / 1_000_000, partnerFeeWallet!, sig, (claim as { is_devnet?: boolean | null }).is_devnet === true);
+    }
+  }
+
+  /**
+   * Withdraws a partner payout whose money is a compressed balance owned by the burner. One transaction, all or nothing:
+   * decompress the whole balance into our fee payer's USDC account, then split it with plain transfers: the partner's
+   * share to the partner, the rest to the person, and Loofta's fee simply stays where it landed. The fee payer's
+   * account is only a stop inside the transaction; nothing can be left there if any step fails.
+   */
+  private async sweepCompressedPartnerBurner(a: {
+    claimId: string;
+    claim: Claim;
+    destination: string;
+    burnerKeypair: Keypair;
+    conn: Connection;
+    claimMint: PublicKey;
+    partnerId: string;
+    partnerFeeUnits: bigint;
+    partnerFeeWallet: string | null;
+    stampedLooftaFeeUnits: bigint | null;
+    cluster: 'mainnet' | 'devnet';
+  }): Promise<{ sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number; deliveredPrivately: boolean }> {
+    const { claimId, claim, destination, burnerKeypair, conn, claimMint, partnerId, partnerFeeUnits, partnerFeeWallet, cluster } = a;
+    const light = this.lightCompression;
+    if (!light) throw new BadRequestException('Withdrawals are temporarily unavailable. Please try again shortly.');
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    if (!feePayerKp) throw new BadRequestException('Claim sponsorship is not configured. Please contact support to recover this payment.');
+
+    // Every partner payout is stamped with Loofta's fee before the burner is touched. A missing stamp means no fee, never a guess.
+    if (a.stampedLooftaFeeUnits === null) this.logger.warn(`Claim ${claimId}: compressed partner payout has no Loofta fee stamp; charging none`);
+    const looftaFeeUnits = a.stampedLooftaFeeUnits ?? BigInt(0);
+    const expectedUnits = BigInt(Math.round(parseFloat(String(claim.amount || '0')) * 1_000_000));
+    const burner = burnerKeypair.publicKey;
+    const balance = await light.compressedBalance(cluster, burner, claimMint);
+
+    if (balance < expectedUnits) {
+      // Empty can also mean a previous attempt landed but was never recorded: look for a successful transaction the
+      // burner itself signed before concluding "not funded yet".
+      const prior = await this.findCompressedBurnerSweep(conn, burner);
+      if (prior) {
+        const net = expectedUnits - looftaFeeUnits - partnerFeeUnits;
+        this.logger.log(`Claim ${claimId}: compressed burner is empty but an already-landed sweep was found (${prior}); recording it as delivered`);
+        await this.finishPartnerSweep(claimId, claim, partnerId, partnerFeeUnits, partnerFeeWallet, net, prior);
+        return { sweepTxHash: prior, sweptAmount: (Number(net) / 1_000_000).toFixed(6), feeAmountUsdc: looftaFeeUnits > BigInt(0) ? Number(looftaFeeUnits) / 1_000_000 : undefined, deliveredPrivately: false };
+      }
+      throw new BadRequestException('This payout is not ready to withdraw yet. Please try again in a moment.');
+    }
+
+    if (partnerFeeUnits * BigInt(100) > balance * BigInt(Math.round(MAX_PARTNER_FEE_SHARE * 100))) {
+      throw new BadRequestException('This payout has an invalid fee. Please contact support.');
+    }
+    const netUnits = balance - looftaFeeUnits - partnerFeeUnits;
+    if (netUnits <= BigInt(0)) throw new BadRequestException('This amount is too small to withdraw after fees.');
+
+    const recipientPubkey = new PublicKey(destination.trim());
+    const recipientAta = await getAssociatedTokenAddress(claimMint, recipientPubkey, true);
+    const feeAta = await getAssociatedTokenAddress(claimMint, feePayerKp.publicKey);
+    const ixs: TransactionInstruction[] = [];
+    if (!(await tokenAccountExists(conn, feeAta))) {
+      ixs.push(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feeAta, feePayerKp.publicKey, claimMint));
+    }
+    if (!(await tokenAccountExists(conn, recipientAta))) {
+      const allowed = await this.guardAtaSponsorship(recipientPubkey.toBase58(), claimMint.toBase58(), `claim:${claimId}`);
+      if (!allowed) {
+        throw new BadRequestException(
+          'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse. Please contact support.',
+        );
+      }
+      ixs.push(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, recipientAta, recipientPubkey, claimMint));
+    }
+    let partnerAta: PublicKey | null = null;
+    if (partnerFeeUnits > BigInt(0)) {
+      partnerAta = await getAssociatedTokenAddress(claimMint, new PublicKey(partnerFeeWallet!), true);
+      if (!(await tokenAccountExists(conn, partnerAta))) {
+        // Funds stay in the burner untouched. The partner can fix this; the recipient loses nothing.
+        throw new BadRequestException('This partner cannot receive fees right now, so this payout cannot be withdrawn yet. Please try again later.');
+      }
+    }
+
+    const sol = await conn.getBalance(feePayerKp.publicKey).catch(() => 0);
+    if (sol < 100_000) {
+      this.logger.warn(`Claim ${claimId}: fee payer has ${sol} lamports; cannot sweep a compressed payout`);
+      throw new BadRequestException('Network fee sponsorship is temporarily unavailable. Please try again shortly.');
+    }
+
+    ixs.push(await light.buildDecompressInstruction(cluster, claimMint, burner, feePayerKp.publicKey, balance, feeAta));
+    if (partnerAta && partnerFeeUnits > BigInt(0)) {
+      ixs.push(createTransferInstruction(feeAta, partnerAta, feePayerKp.publicKey, partnerFeeUnits));
+    }
+    ixs.push(createTransferInstruction(feeAta, recipientAta, feePayerKp.publicKey, netUnits));
+
+    this.logger.log(`Claim ${claimId}: [SWEEP] compressed burner->recipient balance=${balance} looftaFeeUnits=${looftaFeeUnits} partnerFeeUnits=${partnerFeeUnits} netUnits=${netUnits} (must add up to balance)`);
+    let sig: string;
+    try {
+      sig = await light.sendInstructions(cluster, ixs, feePayerKp, [burnerKeypair]);
+    } catch (e) {
+      this.logger.error(`Claim ${claimId}: [SWEEP] compressed sweep failed — balance=${balance} net=${netUnits} error=${(e as Error)?.message}`);
+      throw e;
+    }
+    this.logger.log(`Claim ${claimId}: [MONEY] swept compressed ${balance} base-units -> recipient=${destination.slice(0, 8)} tx=${sig}`);
+    await this.finishPartnerSweep(claimId, claim, partnerId, partnerFeeUnits, partnerFeeWallet, netUnits, sig);
+    return {
+      sweepTxHash: sig,
+      sweptAmount: (Number(netUnits) / 1_000_000).toFixed(6),
+      feeAmountUsdc: looftaFeeUnits > BigInt(0) ? Number(looftaFeeUnits) / 1_000_000 : undefined,
+      deliveredPrivately: false,
+    };
+  }
+
+  /** A successful transaction in which this burner was a signer: the only thing a burner ever signs is its own sweep. */
+  private async findCompressedBurnerSweep(conn: Connection, burner: PublicKey): Promise<string | null> {
+    try {
+      const sigs = await conn.getSignaturesForAddress(burner, { limit: 5 });
+      for (const info of sigs) {
+        if (info.err) continue;
+        const tx = await conn.getParsedTransaction(info.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+        if (tx?.meta?.err) continue;
+        const signedByBurner = tx?.transaction.message.accountKeys.some((k) => k.signer && k.pubkey.equals(burner));
+        if (signedByBurner) return info.signature;
+      }
+    } catch (e) {
+      this.logger.warn(`findCompressedBurnerSweep failed: ${(e as Error)?.message}`);
+    }
+    return null;
   }
 
   /**

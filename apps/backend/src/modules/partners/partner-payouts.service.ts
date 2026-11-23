@@ -520,34 +520,46 @@ export class PartnerPayoutsService {
         signature.trim(),
         partner.treasury_multisig ? { multisig: partner.treasury_multisig } : batch.sender_wallet,
       );
-      for (const paymentId of funded) {
-        const { data: won } = await this.supabase.payoutBatchItems
-          .update({ status: 'funded', funding_tx: signature.trim() })
-          .eq('batch_id', batchId)
-          .eq('payment_id', paymentId)
-          .eq('status', 'created')
-          .select('id');
-        if (!won?.length) continue; // another confirm already counted this one
-        try {
-          await this.claims.updateStatus(paymentId, 'SUCCESS', { txHash: signature.trim(), paidWithToken: 'USDC', paidWithChain: 'solana' });
-          this.claims.notifyRecipientAfterPayment(paymentId);
-        } catch (err) {
-          // Put it back so a retry can finish the job instead of leaving a funded burner unrecorded.
-          await this.supabase.payoutBatchItems.update({ status: 'created', funding_tx: null }).eq('batch_id', batchId).eq('payment_id', paymentId).eq('status', 'funded');
-          this.logger.error(`Partner payout ${paymentId} funded on-chain but status update failed: ${(err as Error).message}`);
-          throw new BadRequestException('Funding was seen on-chain but could not be recorded yet. Retry in a moment.');
-        }
-      }
+      for (const paymentId of funded) await this.recordFunded(batchId, paymentId, signature.trim());
       remaining = remaining.filter((t) => !funded.has(t.claimId));
     }
 
-    const stillOpen = (await this.getItems(batchId)).some((i) => i.status === 'created');
-    if (!stillOpen) {
-      await this.supabase.payoutBatches.update({ status: 'executed' }).eq('id', batchId).eq('partner_id', partner.id).eq('status', 'awaiting_funding');
-      await this.partners.audit(partner.id, userId, 'batch.funded', { type: 'batch', id: batchId });
-      await this.emitBatchEvent(partner, batchId, 'batch.executed', { total_amount: Number(batch.total_amount), item_count: batch.item_count });
-    }
+    await this.closeBatchIfFunded(partner, batchId, userId);
     return this.view(partner.id, batchId);
+  }
+
+  /**
+   * Marks one payout funded once its money is really in the burner. Shared by confirm() and the compressed funding job.
+   * Returns false when another run already counted it.
+   */
+  async recordFunded(batchId: string, paymentId: string, signature: string): Promise<boolean> {
+    const { data: won } = await this.supabase.payoutBatchItems
+      .update({ status: 'funded', funding_tx: signature })
+      .eq('batch_id', batchId)
+      .eq('payment_id', paymentId)
+      .eq('status', 'created')
+      .select('id');
+    if (!won?.length) return false; // another run already counted this one
+    try {
+      await this.claims.updateStatus(paymentId, 'SUCCESS', { txHash: signature, paidWithToken: 'USDC', paidWithChain: 'solana' });
+      this.claims.notifyRecipientAfterPayment(paymentId);
+    } catch (err) {
+      // Put it back so a retry can finish the job instead of leaving a funded burner unrecorded.
+      await this.supabase.payoutBatchItems.update({ status: 'created', funding_tx: null }).eq('batch_id', batchId).eq('payment_id', paymentId).eq('status', 'funded');
+      this.logger.error(`Partner payout ${paymentId} funded on-chain but status update failed: ${(err as Error).message}`);
+      throw new BadRequestException('Funding was seen on-chain but could not be recorded yet. Retry in a moment.');
+    }
+    return true;
+  }
+
+  /** When nothing in the batch is left to fund, the batch is done: status, audit entry and the webhook event. */
+  async closeBatchIfFunded(partner: Partner, batchId: string, actorUserId: string): Promise<void> {
+    const stillOpen = (await this.getItems(batchId)).some((i) => i.status === 'created');
+    if (stillOpen) return;
+    const batch = await this.getOwnedBatch(partner.id, batchId);
+    await this.supabase.payoutBatches.update({ status: 'executed' }).eq('id', batchId).eq('partner_id', partner.id).eq('status', 'awaiting_funding');
+    await this.partners.audit(partner.id, actorUserId, 'batch.funded', { type: 'batch', id: batchId });
+    await this.emitBatchEvent(partner, batchId, 'batch.executed', { total_amount: Number(batch.total_amount), item_count: batch.item_count });
   }
 
   // ---------------------------------------------------------------- overview
