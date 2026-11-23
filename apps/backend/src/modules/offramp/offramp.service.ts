@@ -370,7 +370,7 @@ export class OfframpService {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shortId);
     const isShort = /^[0-9a-zA-Z]{8}$/.test(shortId);
     if (!isUuid && !isShort) throw new NotFoundException('Payment not found');
-    const cols = 'id, platform, platform_identifier, currency, amount_usdc, status, eta_seconds, eta_label, zkp2p_deposit_id';
+    const cols = 'id, platform, platform_identifier, currency, amount_usdc, status, eta_seconds, eta_label, zkp2p_deposit_id, updated_at';
     const client = this.supabase.getClient();
     let data: any = null;
     let error: { message?: string } | null = null;
@@ -383,6 +383,14 @@ export class OfframpService {
       }
     }
     if (error || !data || data.status === 'DELETED') throw new NotFoundException('Payment not found');
+    // Anyone viewing the page keeps a filled payment from sitting at DEPOSITED when no cron runs
+    // (local dev, or a missed tick). Throttled by updated_at, which checkFulfilment bumps.
+    if (data.status === 'DEPOSITED' && data.zkp2p_deposit_id
+        && Date.now() - new Date(data.updated_at ?? 0).getTime() > 20_000) {
+      await this.checkFulfilment(data);
+      const { data: fresh } = await client.from('offramp_requests').select('status').eq('id', data.id).maybeSingle();
+      if (fresh?.status) data.status = fresh.status;
+    }
     const platform = String(data.platform);
     // Separate read so a database without the rate_percent column yet still serves the page.
     const { data: rateRow } = await client.from('offramp_requests').select('rate_percent').eq('id', data.id).maybeSingle();
