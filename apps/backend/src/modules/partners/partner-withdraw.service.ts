@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PublicKey } from '@solana/web3.js';
 import { getAccount, getAssociatedTokenAddress } from '@solana/spl-token';
@@ -77,7 +77,8 @@ export class PartnerWithdrawService {
     private readonly claims: ClaimsService,
     private readonly sponsor: SolanaSponsorService,
     private readonly feeSettings: PartnerFeeSettingsService,
-    @Optional() private readonly light: LightCompressionService | null = null,
+    // Explicit token: a `Type | null` parameter is emitted as `Object`, which Nest cannot resolve, and Optional would silently give null.
+    @Optional() @Inject(LightCompressionService) private readonly light: LightCompressionService | null = null,
   ) {}
 
   private get isDevnet() {

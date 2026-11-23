@@ -141,7 +141,8 @@ export class ClaimsService {
     private readonly pajCashBank: PajCashBankService,
     private readonly pajCashOrders: PajCashOrdersService,
     @Optional() private readonly redisService: RedisService | null = null,
-    @Optional() private readonly lightCompression: LightCompressionService | null = null,
+    // Explicit token: a `Type | null` parameter is emitted as `Object`, which Nest cannot resolve, and Optional would silently give null.
+    @Optional() @Inject(LightCompressionService) private readonly lightCompression: LightCompressionService | null = null,
   ) {
     const defaultUsdcMint = isSolanaDevnetFromConfig(this.configService)
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
