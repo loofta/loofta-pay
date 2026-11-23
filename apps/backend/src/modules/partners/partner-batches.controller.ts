@@ -38,6 +38,13 @@ export class PartnerBatchesController {
     return this.payouts.payouts(orgId, user.id);
   }
 
+  @Post('payouts/:paymentId/cancel')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(10, 60, 'partners:payout-cancel')
+  cancelPayout(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Param('paymentId') paymentId: string) {
+    return this.payouts.cancelPayout(orgId, user.id, paymentId);
+  }
+
   @Get('batches')
   @RateLimit(60, 60, 'partners:batches-list')
   list(@PrivyUser() user: Caller, @Param('orgId') orgId: string) {

@@ -1,7 +1,7 @@
 import { RedisService } from '@/redis/redis.service';
 import { isDisposableEmail } from '@/common/disposable-email';
 import { assertSafePublicUrlResolved } from '@/common/assert-safe-public-url';
-import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createCipheriv, createDecipheriv, randomBytes, createHmac } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
@@ -3171,6 +3171,109 @@ export class ClaimsService {
     // Both branches that can set sweepTxHash here (the direct SPL sweep and the already-landed-sweep
     // recovery) are always plain public transfers — private delivery returns earlier, above.
     return { sweepTxHash, sweptAmount, feeAmountUsdc, deliveredPrivately: false };
+  }
+
+  /**
+   * Takes a funded, not yet withdrawn partner payout back: the money in its burner goes to the partner's own company
+   * wallet and the burner's token account is closed (its rent returns to the fee payer). The payout becomes CANCELLED, so
+   * the person can no longer withdraw it.
+   *
+   * Safety, in order:
+   *  - Only a payout of THIS partner that is funded and not withdrawn, and not being withdrawn right now.
+   *  - The destination is the partner's company wallet, passed in by the partner service from the partner's own row. It
+   *    is never taken from a request, and the fee payer never creates an account for it.
+   *  - The status flips to CANCELLED first, atomically, so a person cannot start a withdrawal in between. If moving the
+   *    money then fails and the burner still holds it, the status is put back and nothing has changed.
+   */
+  async refundPartnerPayout(claimId: string, partnerId: string, vaultAddress: string): Promise<{ amountUsdc: number; txHash: string | null }> {
+    const claim = (await this.findOneRaw(claimId)) as Claim & {
+      partner_id?: string | null; partner_withdrawn_at?: string | null; recipient_claim_lock_at?: string | null; burner_compressed?: boolean | null;
+      claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null;
+    };
+    if (claim.partner_id !== partnerId) throw new ForbiddenException('Payment does not belong to this partner.');
+    const status = (claim.status || '').toUpperCase();
+    if (claim.partner_withdrawn_at) throw new BadRequestException('This payout was already withdrawn.');
+    if (status === 'CANCELLED') throw new BadRequestException('This payout is already cancelled.');
+    if (status !== 'PRIVATE_TRANSFER_PENDING' && status !== 'SUCCESS') throw new BadRequestException('This payout is not funded, so there is nothing to take back.');
+    if (claim.recipient_claim_lock_at && claim.recipient_claim_lock_at > this.recipientClaimLockStaleCutoffIso()) {
+      throw new ConflictException('This payout is being withdrawn right now. Try again in a minute.');
+    }
+    const burnerAddr = (claim.claim_burner_address || '').trim();
+    if (!burnerAddr || !claim.claim_burner_encrypted_secret) throw new BadRequestException('This payout has no funds to take back.');
+    if (!isValidSolanaAddress(vaultAddress)) throw new BadRequestException('Create your company wallet first.');
+    if (!this.canDecryptBurnerSecret() || !this.solanaSponsor?.isAvailable()) throw new BadRequestException('Taking a payout back is not available right now. Please contact support.');
+
+    const { data: won } = await this.supabaseService.payments
+      .update({ status: 'CANCELLED' })
+      .eq('id', claimId).eq('partner_id', partnerId).eq('status', claim.status as string).is('partner_withdrawn_at', null)
+      .select('id');
+    if (!won?.length) throw new ConflictException('This payout just changed. Refresh and try again.');
+
+    const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(this.decryptClaimBurnerSecret(claim.claim_burner_encrypted_secret, burnerAddr)));
+    const net = this.resolveClaimNetwork(claim);
+    const compressed = claim.burner_compressed === true;
+    let moved = BigInt(0);
+    let txHash: string | null = null;
+    try {
+      const out = await this.moveBurnerToVault(claimId, net, burnerKeypair, new PublicKey(vaultAddress), compressed);
+      moved = out.units;
+      txHash = out.signature;
+    } catch (e) {
+      // The money may or may not have moved. Ask the chain: if the burner still holds it, undo the cancel completely.
+      const left = await this.partnerBurnerUnits(net, burnerKeypair.publicKey, compressed).catch(() => null);
+      // Unknown (the chain could not be read) is NOT restored: it stays cancelled, which cannot lose money, and is logged loudly.
+      if (left === null) this.logger.error(`CRITICAL claim ${claimId}: refund errored and the burner balance could not be read; left CANCELLED for support to check. ${(e as Error)?.message}`);
+      if (left !== null && left > BigInt(0)) {
+        await this.supabaseService.payments.update({ status: claim.status as string }).eq('id', claimId).eq('status', 'CANCELLED');
+        this.logger.warn(`Claim ${claimId}: taking the payout back failed, status restored: ${(e as Error)?.message}`);
+        throw new BadRequestException(`Could not take this payout back: ${(e as Error)?.message || 'unknown error'}. Nothing was changed.`);
+      }
+      if (left === BigInt(0)) this.logger.error(`CRITICAL claim ${claimId}: refund transaction errored but the burner is empty; treating as refunded. ${(e as Error)?.message}`);
+    }
+    await this.supabaseService.payments.update({ burner_reclaimed_at: new Date().toISOString() }).eq('id', claimId);
+    this.logger.log(`Claim ${claimId}: [MONEY] partner payout taken back, ${moved} base-units -> company wallet ${vaultAddress.slice(0, 8)} tx=${txHash}`);
+    return { amountUsdc: Number(moved) / 1_000_000, txHash };
+  }
+
+  private async partnerBurnerUnits(net: { conn: Connection; claimMint: PublicKey; cluster: 'mainnet' | 'devnet'; tokenProgram: PublicKey }, burner: PublicKey, compressed: boolean): Promise<bigint> {
+    if (compressed) {
+      if (!this.lightCompression) throw new Error('compressed payouts are not available');
+      return this.lightCompression.compressedBalance(net.cluster, burner, net.claimMint);
+    }
+    const ata = await getAssociatedTokenAddress(net.claimMint, burner, false, net.tokenProgram);
+    if (!(await tokenAccountExists(net.conn, ata, { programId: net.tokenProgram }))) return BigInt(0);
+    return (await getAccount(net.conn, ata, 'confirmed', net.tokenProgram)).amount;
+  }
+
+  /** Burner to company wallet: a plain transfer plus closing the token account, or a decompress for a compressed burner. */
+  private async moveBurnerToVault(
+    claimId: string,
+    net: { conn: Connection; claimMint: PublicKey; cluster: 'mainnet' | 'devnet'; tokenProgram: PublicKey },
+    burner: Keypair,
+    vault: PublicKey,
+    compressed: boolean,
+  ): Promise<{ units: bigint; signature: string }> {
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    if (!feePayerKp) throw new Error('fee payer is not available');
+    const { conn, claimMint, cluster, tokenProgram } = net;
+    const vaultAta = await getAssociatedTokenAddress(claimMint, vault, true, tokenProgram);
+    if (!(await tokenAccountExists(conn, vaultAta, { programId: tokenProgram }))) throw new Error('the company wallet has no USDC account');
+    const units = await this.partnerBurnerUnits(net, burner.publicKey, compressed);
+    if (units <= BigInt(0)) throw new Error('the payout holds no funds');
+    if ((await conn.getBalance(feePayerKp.publicKey).catch(() => 0)) < 100_000) throw new Error('network fee sponsorship is temporarily unavailable');
+
+    if (compressed) {
+      if (!this.lightCompression) throw new Error('compressed payouts are not available');
+      const ix = await this.lightCompression.buildDecompressInstruction(cluster, claimMint, burner.publicKey, feePayerKp.publicKey, units, vaultAta);
+      return { units, signature: await this.lightCompression.sendInstructions(cluster, [ix], feePayerKp, [burner]) };
+    }
+    const burnerAta = await getAssociatedTokenAddress(claimMint, burner.publicKey, false, tokenProgram);
+    const tx = new Transaction();
+    tx.add(createTransferInstruction(burnerAta, vaultAta, burner.publicKey, units, [], tokenProgram));
+    // The same transaction closes the token account, so its rent goes back to the fee payer that paid it.
+    tx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burner.publicKey, [], tokenProgram));
+    const signature = await this.sendAndConfirmWithRebuild(conn, tx, feePayerKp.publicKey, [feePayerKp, burner], `refund-${claimId.slice(0, 8)}`);
+    return { units, signature };
   }
 
   /**

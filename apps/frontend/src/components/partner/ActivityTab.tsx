@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Notice, PageHeader, Pill, Row, Segmented, StatCard, Table, inputCls } from "./ui";
-import { usePartnerApi } from "./usePartnerApi";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Btn, Notice, PageHeader, Pill, Row, Segmented, StatCard, Table, inputCls } from "./ui";
+import { post, usd, usePartnerApi } from "./usePartnerApi";
 
-type Stage = "created" | "funded" | "claimed" | "withdrawn";
+type Stage = "created" | "funded" | "claimed" | "withdrawn" | "cancelled";
 type Payout = {
   payment_id: string;
   recipient: string | null;
@@ -20,6 +20,7 @@ const STAGE: Record<Stage, { label: string; tone: "grey" | "blue" | "amber" | "g
   funded: { label: "Funded", tone: "blue" },
   claimed: { label: "Claimed", tone: "amber" },
   withdrawn: { label: "Withdrawn", tone: "green" },
+  cancelled: { label: "Cancelled", tone: "grey" },
 };
 
 function updated(iso: string): string {
@@ -30,7 +31,7 @@ function updated(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
 }
 
-const TEMPLATE = "minmax(0,1.6fr) 110px minmax(0,1.3fr) 150px 110px";
+const TEMPLATE = "minmax(0,1.6fr) 110px minmax(0,1.3fr) 150px 110px 130px";
 
 /** The claim flow for every payout: created, funded, claimed by the recipient, then withdrawn. */
 export function ActivityTab({ orgId }: { orgId: string }) {
@@ -39,12 +40,35 @@ export function ActivityTab({ orgId }: { orgId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | Stage>("all");
   const [q, setQ] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     call<Payout[]>(`partners/${encodeURIComponent(orgId)}/payouts`)
       .then(setRows)
       .catch((e: Error) => setError(e.message));
   }, [call, orgId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  /** Takes a funded payout back: the money returns to the company wallet. Owners and admins only (the server checks). */
+  const cancel = async (r: Payout) => {
+    if (!window.confirm(`Take back ${usd(r.amount)} sent to ${r.name ?? r.recipient ?? "this recipient"}? The money returns to your company wallet and they will no longer be able to withdraw it.`)) return;
+    setBusy(r.payment_id);
+    setError(null);
+    setDone(null);
+    try {
+      const out = await call<{ refunded_usdc: number }>(`partners/${encodeURIComponent(orgId)}/payouts/${encodeURIComponent(r.payment_id)}/cancel`, post());
+      setDone(`${usd(out.refunded_usdc)} is back in your company wallet.`);
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const count = (s: Stage) => (rows ?? []).filter((r) => r.stage === s).length;
 
@@ -72,6 +96,11 @@ export function ActivityTab({ orgId }: { orgId: string }) {
         <StatCard label="Claimed" dot="amber" value={String(count("claimed"))} />
         <StatCard label="Withdrawn" dot="green" value={String(count("withdrawn"))} />
       </div>
+      {done && (
+        <div className="mt-6">
+          <Notice kind="ok">{done}</Notice>
+        </div>
+      )}
 
       <div className="mt-8 flex flex-col gap-4 xl:flex-row">
         <div className="relative flex-1">
@@ -90,6 +119,7 @@ export function ActivityTab({ orgId }: { orgId: string }) {
             { value: "funded", label: "Funded" },
             { value: "claimed", label: "Claimed" },
             { value: "withdrawn", label: "Withdrawn" },
+            { value: "cancelled", label: "Cancelled" },
           ]}
         />
       </div>
@@ -100,7 +130,7 @@ export function ActivityTab({ orgId }: { orgId: string }) {
         ) : !shown.length ? (
           <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">No payouts match.</p>
         ) : (
-          <Table cols={["Recipient", "Amount", "Batch", "Status", "Updated"]} template={TEMPLATE}>
+          <Table cols={["Recipient", "Amount", "Batch", "Status", "Updated", ""]} template={TEMPLATE}>
             {shown.map((r) => (
               <Row key={r.payment_id} template={TEMPLATE}>
                 <div className="min-w-0">
@@ -115,6 +145,13 @@ export function ActivityTab({ orgId }: { orgId: string }) {
                   </Pill>
                 </span>
                 <span className="text-[color:var(--pt-ink2,#C9C9D0)]">{updated(r.updated_at)}</span>
+                <span>
+                  {r.stage === "funded" && (
+                    <Btn kind="danger" onClick={() => cancel(r)} disabled={busy === r.payment_id} className="!px-3 !py-1.5 !text-[13px]">
+                      {busy === r.payment_id ? "Taking back..." : "Take back"}
+                    </Btn>
+                  )}
+                </span>
               </Row>
             ))}
           </Table>

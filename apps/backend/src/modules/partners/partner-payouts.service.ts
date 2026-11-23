@@ -576,9 +576,10 @@ export class PartnerPayoutsService {
     return null;
   }
 
-  /** created: not funded yet. funded: money is in, recipient has not acted. claimed: recipient started withdrawing. withdrawn: done. */
-  private static stage(r: { status: string; partner_withdrawn_at: string | null; claim_requested_at?: string | null }): 'created' | 'funded' | 'claimed' | 'withdrawn' {
+  /** created: not funded yet. funded: money is in, recipient has not acted. claimed: recipient started withdrawing. withdrawn: done. cancelled: taken back. */
+  private static stage(r: { status: string; partner_withdrawn_at: string | null; claim_requested_at?: string | null }): 'created' | 'funded' | 'claimed' | 'withdrawn' | 'cancelled' {
     if (r.partner_withdrawn_at) return 'withdrawn';
+    if ((r.status || '').toUpperCase() === 'CANCELLED') return 'cancelled';
     if (!PartnerPayoutsService.FUNDED.has((r.status || '').toUpperCase())) return 'created';
     return r.claim_requested_at ? 'claimed' : 'funded';
   }
@@ -608,6 +609,7 @@ export class PartnerPayoutsService {
     for (const r of rows) {
       const amt = Number(r.amount) || 0;
       const st = PartnerPayoutsService.stage(r);
+      if (st === 'cancelled') continue; // taken back: neither paid nor waiting
       if (st === 'withdrawn') {
         withdrawn += amt; withdrawnCount++; paid += amt; paidCount++;
         fees += Number(r.partner_fee_usdc) || 0;
@@ -637,7 +639,7 @@ export class PartnerPayoutsService {
     }
     for (const r of rows) {
       const amt = Number(r.amount) || 0;
-      const paidAt = r.paid_at && PartnerPayoutsService.stage(r) !== 'created' ? idx.get(day(r.paid_at)) : undefined;
+      const paidAt = r.paid_at && !['created', 'cancelled'].includes(PartnerPayoutsService.stage(r)) ? idx.get(day(r.paid_at)) : undefined;
       if (paidAt !== undefined) series[paidAt].paid_usd += amt;
       const wd = r.partner_withdrawn_at ? idx.get(day(r.partner_withdrawn_at)) : undefined;
       if (wd !== undefined) series[wd].withdrawn_usd += amt;
@@ -720,6 +722,18 @@ export class PartnerPayoutsService {
       if (r.handle_platform && r.handle) map.set(`${r.handle_platform}:${String(r.handle).toLowerCase()}`, r.display_name as string);
     }
     return map;
+  }
+
+  /**
+   * Takes a funded payout back: its money returns to the company wallet and the person can no longer withdraw it.
+   * Owners and admins only. The destination is always the partner's own company wallet.
+   */
+  async cancelPayout(orgId: string, userId: string, paymentId: string) {
+    const { partner } = await this.partners.requireMembership(orgId, userId, 'payout.approve');
+    if (!partner.treasury_vault) throw new BadRequestException('Create your company wallet first.');
+    const { amountUsdc, txHash } = await this.claims.refundPartnerPayout(paymentId, partner.id, partner.treasury_vault);
+    await this.partners.audit(partner.id, userId, 'payout.cancelled', { type: 'payout', id: paymentId }, { amount_usdc: amountUsdc, tx: txHash });
+    return { payment_id: paymentId, refunded_usdc: amountUsdc, tx_hash: txHash };
   }
 
   /** Small numbers for the sidebar badges. */
