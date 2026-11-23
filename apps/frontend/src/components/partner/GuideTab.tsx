@@ -45,7 +45,7 @@ export function GuideContent() {
       </Card>
 
       <Card title="Fees">
-        <Para>There are two fees and they are always shown separately on the withdraw page. Loofta takes $0.10 plus 0.5% on every cash out, whichever way the person takes the money. Private P2P is also paid 1% under the market rate, and the page shows that to them first. You can add your own fee on top, a flat amount, a percentage, or both. Your fee can never be more than a quarter of what the person withdraws.</Para>
+        <Para>There are two fees. On the withdraw page they are listed separately, except for Private P2P, where the person only sees the amount they receive. Loofta takes $0.05 plus 0.3% on every cash out, whichever way the person takes the money. Private P2P cash-outs start at $10. You can add your own fee on top, a flat amount, a percentage, or both. Your fee can never be more than a quarter of what the person withdraws.</Para>
         <Para>Your fee is paid to the fee wallet you choose. Changing that wallet takes 24 hours to apply, so a stolen login cannot redirect your earnings at once. You can also switch off any cash out route you do not want to offer.</Para>
       </Card>
 

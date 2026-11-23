@@ -16,12 +16,11 @@ WAYS TO TAKE THE MONEY
 - USDC on Solana: sent to any Solana wallet address you choose. This is the fastest route and usually arrives within seconds.
 - Other tokens: swapped and sent to an address on another network such as Bitcoin or Ethereum. It takes a few minutes and depends on the network.
 - Bank or cards: cash to a bank account or debit card through a payment provider. The time depends on the provider and on your bank, and the page shows what applies before you confirm.
-- Private P2P: someone sends you the money through an app such as Wise, PayPal, Revolut or Venmo. You choose the app and your handle. It finishes when a buyer sends the money, so the time varies. It starts at $10. It is paid 1% under the market rate, which is how a buyer is found quickly, and the page shows that 1% before you confirm.
+- Private P2P: someone sends you the money through an app such as Wise, PayPal, Revolut or Venmo. You choose the app and your handle. It finishes when a buyer sends the money, so the time varies. It starts at $10.
 - A company can switch some routes off, so you may not see all four.
 
 FEES
-- You see the fees before you confirm anything. There can be two: Loofta's fee, which is $0.10 plus 0.5% of the amount on every way of withdrawing, and a fee the paying company chooses. They are always listed separately.
-- Private P2P is also paid 1% under the market rate. That 1% is shown as its own line before you confirm.
+- You see the fees before you confirm anything. There can be two: Loofta's fee, which is $0.05 plus 0.3% of the amount on every way of withdrawing, and a fee the paying company chooses. They are always listed separately.
 - The amount you will receive after fees is shown before you confirm.
 
 CANCELLING
@@ -63,7 +62,7 @@ export const SUPPORT_FAQ: Array<{ id: string; question: string; answer: string }
     id: 'fees',
     question: 'What are the fees?',
     answer:
-      'You see every fee before you confirm. Loofta charges $0.10 plus 0.5% on every withdrawal. If the company set a fee, that is listed separately. Private P2P is also paid 1% under the market rate. All of it is shown before you confirm, with the amount you will receive.',
+      'You see every fee before you confirm. Loofta charges $0.05 plus 0.3% on every withdrawal. If the company set a fee, that is listed separately. The page shows the amount you will receive before you confirm.',
   },
   {
     id: 'wrong-address',

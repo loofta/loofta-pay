@@ -51,7 +51,7 @@ describe('demo partner set up from the link', () => {
     expect(q.partner.brand_color).toBe('#3b82f6');
     expect(q.gross_usdc).toBe(400);
     expect(q.partner_fee_usdc).toBe(8.5); // 0.50 flat + 2% of 400
-    expect(q.net_usdc).toBe(389.4); // minus Loofta $0.10 + 0.5% = $2.10
+    expect(q.net_usdc).toBe(390.25); // minus Loofta $0.05 + 0.3% = $1.25
   });
 
   it('ignores junk and keeps the default sample', () => {

@@ -1,6 +1,6 @@
 import type { PublicPartner } from './partners.service';
 import type { WithdrawQuote } from './partner-withdraw.service';
-import { computeLooftaWithdrawFeeUsdc, computePartnerFeeUsdc, P2P_MIN_USD, P2P_RATE_PERCENT } from './partner-fee';
+import { computeLooftaWithdrawFeeUsdc, computePartnerFeeUsdc, type LooftaFeeRates, P2P_MIN_USD, P2P_RATE_PERCENT } from './partner-fee';
 import { WITHDRAW_METHODS, WithdrawMethod } from './partner-withdraw-options';
 
 /**
@@ -67,12 +67,12 @@ export function demoPartner(q: DemoQuery = {}): PublicPartner {
   };
 }
 
-export function demoQuote(opts: DemoQuery = {}): WithdrawQuote {
+export function demoQuote(opts: DemoQuery = {}, rates?: LooftaFeeRates): WithdrawQuote {
   const o = parseDemoOptions(opts.methods, opts.history);
   const partner = demoPartner(opts);
   const prize = num(opts.prize, 1, 10_000, DEMO_PRIZE_USD);
   const partnerFee = computePartnerFeeUsdc(partner, prize);
-  const looftaFee = computeLooftaWithdrawFeeUsdc(prize);
+  const looftaFee = computeLooftaWithdrawFeeUsdc(prize, rates ?? {});
   return {
     partner,
     available: [

@@ -147,6 +147,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('integrator_api_keys');
   }
 
+  get partnerPlatformSettings() {
+    return this.client.from('partner_platform_settings');
+  }
+
   get partnerSettings() {
     return this.client.from('partner_settings');
   }

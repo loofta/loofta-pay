@@ -19,6 +19,7 @@ import { PartnerGroupsController } from './partner-groups.controller';
 import { PayoutVaultService } from './payout-vault.service';
 import { PayoutVaultController } from './payout-vault.controller';
 import { PartnerAdminService } from './partner-admin.service';
+import { PartnerFeeSettingsService } from './partner-fee-settings.service';
 import { PartnerAdminController } from './partner-admin.controller';
 import { PartnerApiController } from './partner-api.controller';
 import { PartnerPortalTokenController, PortalController, PortalGuard } from './partner-portal.controller';
@@ -26,7 +27,7 @@ import { PartnerPortalTokenController, PortalController, PortalGuard } from './p
 @Module({
   imports: [UsersModule, ClaimsModule, IntegratorsModule, EmailModule, PayoutsModule],
   controllers: [PartnersController, PartnerGroupsController, PartnerBatchesController, PartnerTreasuryController, PartnerWithdrawController, PayoutVaultController, PartnerPortalTokenController, PortalController, PartnerApiController, PartnerAdminController],
-  providers: [PartnerAdminService, PartnersService, PartnerGroupsService, PartnerWithdrawService, PartnerPayoutsService, PartnerTreasuryService, PayoutVaultService, PartnerKeysService, PortalTokenService, PortalGuard],
+  providers: [PartnerFeeSettingsService, PartnerAdminService, PartnersService, PartnerGroupsService, PartnerWithdrawService, PartnerPayoutsService, PartnerTreasuryService, PayoutVaultService, PartnerKeysService, PortalTokenService, PortalGuard],
   exports: [PartnersService],
 })
 export class PartnersModule {}

@@ -10,6 +10,7 @@ import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { isValidSolanaAddress } from '@/common/solana-address';
 import { PartnersService, Partner, PublicPartner } from './partners.service';
 import { allocateFeeUnits, computeLooftaWithdrawFeeUsdc, computePartnerFeeUsdc, P2P_MIN_USD, P2P_RATE_PERCENT } from './partner-fee';
+import { PartnerFeeSettingsService } from './partner-fee-settings.service';
 import { DEMO_ORG_ID, DemoQuery, demoConfirm, demoQuote } from './partner-demo';
 import { WITHDRAW_METHODS, WithdrawMethod, enabledMethods } from './partner-withdraw-options';
 
@@ -74,6 +75,7 @@ export class PartnerWithdrawService {
     private readonly partners: PartnersService,
     private readonly claims: ClaimsService,
     private readonly sponsor: SolanaSponsorService,
+    private readonly feeSettings: PartnerFeeSettingsService,
   ) {}
 
   private get isDevnet() {
@@ -156,7 +158,7 @@ export class PartnerWithdrawService {
     }
     const partnerFee = partnerActive ? computePartnerFeeUsdc(partner, gross, { flatAlreadyPaid }) : 0;
     // Loofta's fee is the same on every route: a flat part and a percentage, always shown to the recipient first.
-    const looftaFee = computeLooftaWithdrawFeeUsdc(gross, { flatAlreadyPaid });
+    const looftaFee = computeLooftaWithdrawFeeUsdc(gross, { flatAlreadyPaid, ...(await this.feeSettings.get()) });
     const net = gross - partnerFee - looftaFee;
     let feeLines: PublicFeeLine[] = [];
     try {
@@ -217,7 +219,7 @@ export class PartnerWithdrawService {
   }
 
   async quote(orgId: string, userId: string, demo?: DemoQuery): Promise<WithdrawQuote> {
-    if (orgId === DEMO_ORG_ID) return demoQuote(demo);
+    if (orgId === DEMO_ORG_ID) return demoQuote(demo, await this.feeSettings.get());
     const partner = await this.loadPartner(orgId);
     const c = await this.compute(partner, userId);
     const { data: pub } = await this.supabase.partners
@@ -248,7 +250,7 @@ export class PartnerWithdrawService {
    * Withdraws everything currently available. `maxFeeUsdc` is the partner fee the recipient was
    * shown; if the real fee is higher (the partner changed it in between) nothing is stamped or sent.
    */
-  async confirm(orgId: string, userId: string, opts: { maxFeeUsdc: number; destinationAddress?: string; method?: string }) {
+  async confirm(orgId: string, userId: string, opts: { maxFeeUsdc: number; maxLooftaFeeUsdc?: number; destinationAddress?: string; method?: string }) {
     if (opts.method !== undefined && !WITHDRAW_METHODS.includes(opts.method as WithdrawMethod)) throw new BadRequestException('Unknown withdraw method.');
     if (orgId === DEMO_ORG_ID) {
       if (!Number.isFinite(opts.maxFeeUsdc) || opts.maxFeeUsdc < 0) throw new BadRequestException('max_fee_usdc is required.');
@@ -268,6 +270,10 @@ export class PartnerWithdrawService {
     const c = await this.compute(partner, userId, opts.method);
     if (c.reason) throw new BadRequestException(c.reason);
     if (c.partnerFee > opts.maxFeeUsdc + 1e-9) {
+      throw new ConflictException('The fee changed since you last looked. Review it and confirm again.');
+    }
+    // The page also sends the Loofta fee it showed. If Loofta changed its rate in between, nothing is charged blind.
+    if (opts.maxLooftaFeeUsdc !== undefined && c.looftaFee > opts.maxLooftaFeeUsdc + 1e-9) {
       throw new ConflictException('The fee changed since you last looked. Review it and confirm again.');
     }
 

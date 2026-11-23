@@ -1,11 +1,19 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { AdminGuard } from '@/common/guards';
 import { PartnerAdminService } from './partner-admin.service';
+import { PartnerFeeSettingsService } from './partner-fee-settings.service';
+import { MAX_LOOFTA_FEE_BPS, MAX_LOOFTA_FEE_FLAT_USD } from './partner-fee';
 
 class ReviewDto {
   @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+
+class LooftaFeeDto {
+  @IsNumber() @Min(0) @Max(MAX_LOOFTA_FEE_FLAT_USD) flat_usd: number;
+  /** Basis points: 30 is 0.3%. */
+  @IsInt() @Min(0) @Max(MAX_LOOFTA_FEE_BPS) bps: number;
 }
 
 /** Loofta staff only. Approves, rejects or suspends the companies that apply for the partner product. */
@@ -14,7 +22,22 @@ class ReviewDto {
 @UseGuards(AdminGuard)
 @ApiSecurity('privy-auth')
 export class PartnerAdminController {
-  constructor(private readonly admin: PartnerAdminService) {}
+  constructor(private readonly admin: PartnerAdminService, private readonly fees: PartnerFeeSettingsService) {}
+
+  // Declared before the ':id' routes so "loofta-fee" is never read as a company id.
+  @Get('loofta-fee')
+  @ApiOperation({ summary: "Loofta's own fee on every partner withdrawal" })
+  async looftaFee() {
+    const r = await this.fees.get();
+    return { flat_usd: r.flatUsd, bps: r.bps };
+  }
+
+  @Put('loofta-fee')
+  @ApiOperation({ summary: "Change Loofta's own fee on every partner withdrawal (applies to new withdrawals)" })
+  async setLooftaFee(@Body() dto: LooftaFeeDto, @Req() req: { user: { id: string } }) {
+    const r = await this.fees.set(dto.flat_usd, dto.bps, req.user.id);
+    return { flat_usd: r.flatUsd, bps: r.bps };
+  }
 
   @Get()
   @ApiOperation({ summary: 'Companies by status (pending first in the admin UI)' })

@@ -51,6 +51,7 @@ function make(opts: {
   siblingWithdrawn?: boolean;
   history?: Array<Record<string, unknown>>;
   historyError?: boolean;
+  rates?: { flatUsd: number; bps: number };
 } = {}) {
   const partner = { ...basePartner, ...(opts.partner ?? {}) };
   const payments = opts.payments ?? [pay('a', 10, B1)];
@@ -101,7 +102,8 @@ function make(opts: {
   };
   const sponsor = { getConnectionForCluster: () => ({}) };
   const config = { get: (k: string) => (k === 'SOLANA_CLUSTER' ? 'mainnet-beta' : undefined) };
-  const svc = new PartnerWithdrawService(supabase as never, config as never, partnersSvc as never, claims as never, sponsor as never);
+  const feeSettings = { get: async () => opts.rates ?? { flatUsd: 0.05, bps: 30 } };
+  const svc = new PartnerWithdrawService(supabase as never, config as never, partnersSvc as never, claims as never, sponsor as never, feeSettings as never);
   return { svc, events, stamps, claims, partnersSvc, historyFilters };
 }
 
@@ -112,17 +114,17 @@ describe('partner withdraw quote', () => {
     // $0.50 flat + 2% of $10 = $0.70
     expect(q.gross_usdc).toBe(10);
     expect(q.partner_fee_usdc).toBeCloseTo(0.7, 6);
-    // Loofta takes $0.10 + 0.5% = $0.15 on top of that
-    expect(q.loofta_fee_usdc).toBeCloseTo(0.15, 6);
-    expect(q.net_usdc).toBeCloseTo(9.15, 6);
+    // Loofta takes $0.05 + 0.3% = $0.08 on top of that
+    expect(q.loofta_fee_usdc).toBeCloseTo(0.08, 6);
+    expect(q.net_usdc).toBeCloseTo(9.22, 6);
     expect(q.can_withdraw).toBe(true);
   });
 
   it('charges the same Loofta fee whether or not the recipient is registered', async () => {
     const { svc } = make({ payments: [pay('a', 10, B1, true)] });
     const q = await svc.quote('org_x', 'u1');
-    expect(q.loofta_fee_usdc).toBeCloseTo(0.15, 6);
-    expect(q.net_usdc).toBeCloseTo(9.15, 6);
+    expect(q.loofta_fee_usdc).toBeCloseTo(0.08, 6);
+    expect(q.net_usdc).toBeCloseTo(9.22, 6);
   });
 
   it('keeps an unfunded payout in "processing" and does not count it', async () => {
@@ -159,7 +161,7 @@ describe('partner withdraw quote', () => {
     const q = await svc.quote('org_x', 'u1');
     expect(q.partner_fee_usdc).toBe(0);
     expect(q.can_withdraw).toBe(true);
-    expect(q.net_usdc).toBeCloseTo(9.85, 6);
+    expect(q.net_usdc).toBeCloseTo(9.92, 6);
   });
 });
 
@@ -180,12 +182,38 @@ describe('partner withdraw confirm', () => {
     expect(stamps.b.partner_fee_wallet).toBe(FEE_WALLET);
   });
 
-  it('stamps the Loofta fee on every payout, adding up to the quoted $0.10 + 0.5%', async () => {
+  it('stamps the Loofta fee on every payout, adding up to the quoted $0.05 + 0.3%', async () => {
     const { svc, stamps } = make({ payments: [pay('a', 3.333333, B1), pay('b', 6.666667, B2)], balances: { [B1]: BigInt(3_333_333), [B2]: BigInt(6_666_667) } });
     const out = await svc.confirm('org_x', 'u1', { maxFeeUsdc: 1 });
     const total = Number(stamps.a.partner_loofta_fee_usdc) + Number(stamps.b.partner_loofta_fee_usdc);
-    expect(Math.round(total * 1e6)).toBe(150000);
+    expect(Math.round(total * 1e6)).toBe(80000);
     expect(out.partner_fee_usdc).toBeGreaterThan(0);
+  });
+
+  it('uses the Loofta fee rates the admin set, not the defaults', async () => {
+    const { svc } = make({ rates: { flatUsd: 0.2, bps: 100 } });
+    const q = await svc.quote('org_x', 'u1');
+    // $0.20 flat + 1% of $10
+    expect(q.loofta_fee_usdc).toBeCloseTo(0.3, 6);
+  });
+
+  it('can have no Loofta fee at all when the admin sets it to zero', async () => {
+    const { svc } = make({ rates: { flatUsd: 0, bps: 0 } });
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.loofta_fee_usdc).toBe(0);
+    expect(q.fees?.some((f) => f.kind === 'loofta')).toBe(false);
+  });
+
+  it('refuses when the Loofta fee is higher than the one the page showed, and sweeps nothing', async () => {
+    const { svc, events } = make({ payments: [pay('a', 10, B1)] });
+    await expect(svc.confirm('org_x', 'u1', { maxFeeUsdc: 1, maxLooftaFeeUsdc: 0.01 })).rejects.toThrow(/fee changed/i);
+    expect(events).toEqual([]);
+  });
+
+  it('still works for callers that send no Loofta fee limit', async () => {
+    const { svc } = make();
+    const out = await svc.confirm('org_x', 'u1', { maxFeeUsdc: 1 });
+    expect(out.results[0].ok).toBe(true);
   });
 
   it('refuses a P2P cash-out under $10 and sweeps nothing', async () => {
@@ -272,10 +300,10 @@ describe('the demo partner (orgId=demo)', () => {
     const q = await svc.quote('demo', 'u1');
     expect(q.partner.name).toBe('Acme');
     expect(q.gross_usdc).toBe(120);
-    // $0.25 flat + 1% of $120, then Loofta $0.10 + 0.5% = $0.70
+    // $0.25 flat + 1% of $120, then Loofta $0.05 + 0.3% = $0.41
     expect(q.partner_fee_usdc).toBeCloseTo(1.45, 6);
-    expect(q.loofta_fee_usdc).toBeCloseTo(0.7, 6);
-    expect(q.net_usdc).toBeCloseTo(117.85, 6);
+    expect(q.loofta_fee_usdc).toBeCloseTo(0.41, 6);
+    expect(q.net_usdc).toBeCloseTo(118.14, 6);
     expect(q.can_withdraw).toBe(true);
   });
 
@@ -324,8 +352,8 @@ describe('flat fee on a retried withdrawal', () => {
     const { svc, stamps } = retry(true);
     await svc.confirm('org_x', 'u1', { maxFeeUsdc: 0.2 });
     expect(Number(stamps.b.partner_fee_usdc)).toBeCloseTo(0.2, 6);
-    // Loofta flat $0.10 was taken with the first part, so only the 0.5% is left: $0.05
-    expect(Number(stamps.b.partner_loofta_fee_usdc)).toBeCloseTo(0.05, 6);
+    // Loofta flat $0.05 was taken with the first part, so only the 0.3% is left: $0.03
+    expect(Number(stamps.b.partner_loofta_fee_usdc)).toBeCloseTo(0.03, 6);
   });
 });
 

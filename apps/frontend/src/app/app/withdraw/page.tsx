@@ -17,6 +17,7 @@ import { findUsdcOnSolana } from "@/lib/depositRails";
 import { findTokenBySelection, formatChainLabel } from "@/lib/tokens";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import type { TokenSelection } from "@/app/utils/types";
+import { getAccurateQuote, type NearToken } from "@/services/nearIntents";
 import { SupportChat } from "@/components/support/SupportChat";
 import { LatestCashout } from "@/components/support/LatestCashout";
 
@@ -67,7 +68,7 @@ const METHODS: Record<Method, { title: string; hint: string; badge?: string; ico
   usdc: { title: "USDC on Solana", hint: "To any Solana wallet, in seconds", badge: "Fastest", icons: [{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/solana-mark.svg", bg: "#111" }] },
   token: { title: "Other tokens", hint: "BTC, ETH and other chains, a few minutes", icons: [{ src: "/images/btc.svg", bg: "#F7931A" }, { src: "/images/eth.svg", bg: "#627EEA" }] },
   bank: { title: "Bank or cards", hint: "Bank, card or PAJ Cash, time set by your provider", icons: [{ src: "/images/icons/card-chip.svg", bg: "#1C1C22" }] },
-  p2p: { title: "Private P2P", hint: "Wise, PayPal, Revolut and more. From $10, paid 1% under the market rate", icons: [{ src: "/images/platforms/revolut.png", bg: "#1C1C22" }, { src: "/images/platforms/venmo.png", bg: "#008CFF" }] },
+  p2p: { title: "Private P2P", hint: "Wise, PayPal, Revolut and more. From $10", icons: [{ src: "/images/platforms/revolut.png", bg: "#1C1C22" }, { src: "/images/platforms/venmo.png", bg: "#008CFF" }] },
 };
 const GROUPS: Record<Group, Method[]> = { crypto: ["usdc", "token"], cash: ["bank", "p2p"] };
 
@@ -76,10 +77,10 @@ const dayFmt = (iso: string) => new Date(iso).toLocaleDateString("en-US", { mont
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** Same row as the Loofta withdraw screen, so both look identical. */
-function MethodRow({ method, onClick }: { method: Method; onClick: () => void }) {
+function MethodRow({ method, onClick, disabled, note }: { method: Method; onClick: () => void; disabled?: boolean; note?: string }) {
   const m = METHODS[method];
   return (
-    <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-2xl border border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))] bg-[color:var(--pt-surface3,#1A1A20)] px-3.5 py-3.5 text-left hover:border-[color:var(--pt-w20,rgba(255,255,255,0.2))]">
+    <button type="button" onClick={onClick} disabled={disabled} className={`flex w-full items-center gap-3 rounded-2xl border border-[color:var(--pt-w0p07,rgba(255,255,255,0.07))] bg-[color:var(--pt-surface3,#1A1A20)] px-3.5 py-3.5 text-left ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-[color:var(--pt-w20,rgba(255,255,255,0.2))]"}`}>
       <span className="flex shrink-0">
         {m.icons.map((icon, i) => (
           <span key={icon.src} className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border-2 border-[color:var(--pt-surface3,#1A1A20)]" style={{ background: icon.bg, marginLeft: i ? -10 : 0 }}>
@@ -93,7 +94,7 @@ function MethodRow({ method, onClick }: { method: Method; onClick: () => void })
           <span className="text-base font-bold text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>{m.title}</span>
           {m.badge && <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-sm font-semibold text-emerald-400">{m.badge}</span>}
         </span>
-        <span className="block text-sm text-[color:var(--pt-ink3,#8A8893)]">{m.hint}</span>
+        <span className="block text-sm text-[color:var(--pt-ink3,#8A8893)]">{note ?? m.hint}</span>
       </span>
       <span className="text-[color:var(--pt-ink3,#8A8893)]">→</span>
     </button>
@@ -140,6 +141,7 @@ function WithdrawContent() {
   const [platformId, setPlatformId] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
   const { data: tokens = [] } = useTokensQuery();
+  const [tokenQuote, setTokenQuote] = useState<{ out: string | null; loading: boolean; error: string | null }>({ out: null, loading: false, error: null });
   const [tokenSel, setTokenSel] = useState<TokenSelection | undefined>(undefined);
   const [tokenAddr, setTokenAddr] = useState("");
   // Bank or cards runs right here once the payout is ready, so it needs the person's own wallet and what landed in it.
@@ -201,7 +203,29 @@ function WithdrawContent() {
   const p2pBelow = method === "p2p" && !!quote && quote.gross_usdc < p2pMin;
   const p2pCut = method === "p2p" && quote ? Math.round(quote.net_usdc * p2pRate) / 100 : 0;
   const youReceive = quote ? Math.max(quote.net_usdc - p2pCut, 0) : 0;
-  const walletOk = (method !== "usdc" || SOLANA_ADDRESS.test(wallet.trim())) && p2pOk && tokenOk && !p2pBelow;
+  const tokenQuoteOk = method !== "token" || (!!tokenQuote.out && !tokenQuote.loading);
+  const walletOk = (method !== "usdc" || SOLANA_ADDRESS.test(wallet.trim())) && p2pOk && tokenOk && !p2pBelow && tokenQuoteOk;
+  useEffect(() => {
+    if (method !== "token" || !token || !usdcSol || !quote || quote.net_usdc <= 0) {
+      setTokenQuote({ out: null, loading: false, error: null });
+      return;
+    }
+    let cancelled = false;
+    setTokenQuote({ out: null, loading: true, error: null });
+    const t = setTimeout(async () => {
+      try {
+        // The quote is for what is left after every fee, so the number shown is what really arrives.
+        const r = await getAccurateQuote({ fromToken: usdcSol as NearToken, toToken: token as NearToken, amount: quote.net_usdc.toString(), slippageBps: 100, dryRun: true });
+        if (cancelled) return;
+        if (r.amountOut && !r.error) setTokenQuote({ out: r.amountOut, loading: false, error: null });
+        else setTokenQuote({ out: null, loading: false, error: "Could not get a price right now. Try again in a moment." });
+      } catch {
+        if (!cancelled) setTokenQuote({ out: null, loading: false, error: "Could not get a price right now. Try again in a moment." });
+      }
+    }, 500);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [method, token?.tokenId, usdcSol?.tokenId, quote?.net_usdc]);
   const fees = quote ? quote.partner_fee_usdc + quote.loofta_fee_usdc : 0;
   // The partner can switch routes off. Older responses carry no list, which means every route is on.
   const on = (m: Method) => !quote?.methods || quote.methods.includes(m);
@@ -233,7 +257,7 @@ function WithdrawContent() {
     try {
       const out = await call(`partner-withdraw/${encodeURIComponent(orgId)}/confirm`, {
         method: "POST",
-        body: JSON.stringify({ max_fee_usdc: quote.partner_fee_usdc, method, ...(method === "usdc" ? { destination_address: wallet.trim() } : {}) }),
+        body: JSON.stringify({ max_fee_usdc: quote.partner_fee_usdc, max_loofta_fee_usdc: quote.loofta_fee_usdc, method, ...(method === "usdc" ? { destination_address: wallet.trim() } : {}) }),
       });
       const sent = (out.results as Array<{ ok: boolean }>).filter((r) => r.ok).length;
       const failed = out.results.length - sent;
@@ -379,7 +403,7 @@ function WithdrawContent() {
                   )}
                   <p className="mt-1 text-sm font-semibold tracking-[0.14em] text-[color:var(--pt-ink3,#8A8893)]">SEND FUNDS TO</p>
                   {GROUPS[activeGroup].filter(on).map((m) => (
-                    <MethodRow key={m} method={m} onClick={() => setMethod(m)} />
+                    <MethodRow key={m} method={m} onClick={() => setMethod(m)} disabled={m === "p2p" && quote.gross_usdc < p2pMin} note={m === "p2p" && quote.gross_usdc < p2pMin ? `Available from ${usd(p2pMin)}` : undefined} />
                   ))}
                 </div>
               )}
@@ -481,7 +505,7 @@ function WithdrawContent() {
 
                   {(
                     <div className="mt-5 divide-y divide-[color:var(--pt-w10,rgba(255,255,255,0.1))] rounded-2xl bg-[color:var(--pt-surface2,#0E0E12)] px-4">
-                      {quote.fees && quote.fees.length > 0 ? (
+                      {method === "p2p" ? null : quote.fees && quote.fees.length > 0 ? (
                         quote.fees.map((f) => (
                           <div key={f.kind} className="flex items-center justify-between py-3">
                             <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">{f.kind === "partner" ? `${name} fee` : f.label}</span>
@@ -494,22 +518,17 @@ function WithdrawContent() {
                           <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(fees)}</span>
                         </div>
                       )}
-                      {method === "p2p" && (
-                        <div className="flex items-center justify-between py-3">
-                          <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">P2P rate, {p2pRate}% under market</span>
-                          <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(p2pCut)}</span>
-                        </div>
-                      )}
                       <div className="flex items-center justify-between py-3">
                         <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">You receive</span>
-                        <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">{usd(method === "p2p" ? youReceive : quote.net_usdc)}</span>
+                        <span className="text-base font-semibold text-[color:var(--pt-ink,#fff)]">{method === "p2p" ? usd(youReceive) : method === "token" ? (tokenQuote.loading ? "Getting price..." : tokenQuote.out ? `≈ ${tokenQuote.out} ${token?.symbol ?? ""}` : "-") : usd(quote.net_usdc)}</span>
                       </div>
                     </div>
                   )}
 
                   <GradientActionButton className="mt-5" onClick={() => void confirm()} disabled={busy || !quote.can_withdraw || !walletOk} loading={busy} loadingText={stage ?? "Sending..."}>
-                    {method === "usdc" ? `Withdraw ${usd(quote.net_usdc)}` : method === "p2p" ? `Cash out ${usd(youReceive)}` : method === "token" ? `Swap ${usd(quote.net_usdc)}` : "Continue to bank or card"}
+                    {method === "usdc" ? `Withdraw ${usd(quote.net_usdc)}` : method === "p2p" ? `Cash out ${usd(youReceive)}` : method === "token" ? "Send" : "Continue to bank or card"}
                   </GradientActionButton>
+                  {method === "token" && tokenQuote.error && <p className="mt-3 text-base text-[color:var(--pt-warn,#FF8A5C)]">{tokenQuote.error}</p>}
                   {quote.reason && <p className="mt-3 text-base text-[color:var(--pt-ink2,#C8C6D0)]">{quote.reason}</p>}
                 </div>
               )}
