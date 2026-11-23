@@ -302,7 +302,7 @@ function Api({ c }: { c: Ctx }) {
   const L: ReactNode[] = [
     <><span className="k">import</span> {"{ LooftaPayClient }"} <span className="k">from</span> <span className="s">&quot;@loofta/pay-sdk&quot;</span>;</>,
     <>&nbsp;</>,
-    <><span className="k">await</span> loofta.partner.<span className="c">createBatch</span>({"{"}</>,
+    <><span className="k">await</span> loofta.<span className="c">createBatch</span>({"{"}</>,
     <>&nbsp;&nbsp;label: <span className="s">&quot;Monthly payouts&quot;</span>,</>,
     <>&nbsp;&nbsp;rows: [</>,
     <>&nbsp;&nbsp;&nbsp;&nbsp;{"{ email: "}<span className="s">&quot;mira@example.com&quot;</span>{", amount: 400 },"}</>,

@@ -65,7 +65,10 @@ export class LooftaPayClient implements Requester {
 
   /** Bulk payouts (needs an apiKey). */
   readonly payouts: PayoutsApi;
-  /** Pay many people from your partner company wallet (needs a partner apiKey). */
+  /**
+   * @deprecated Use the short names on the client itself: `loofta.createBatch(...)`, `loofta.getBatch(...)` and so on.
+   * Kept so code written for 1.2 keeps working.
+   */
   readonly partner: PartnerApi;
   /** The payout portal your users see (needs an apiKey). */
   readonly portal: PortalApi;
@@ -84,6 +87,47 @@ export class LooftaPayClient implements Requester {
     this.partner = new PartnerApi(this);
     this.portal = new PortalApi(this);
     this.webhooks = new WebhooksApi(this);
+  }
+
+  // ---- Pay many people from your partner company wallet (needs a partner apiKey) ----
+
+  /** Draft a batch of payouts to email addresses. Your team approves and funds it in the partner portal. */
+  createBatch(params: Parameters<PartnerApi["createBatch"]>[0]) {
+    return this.partner.createBatch(params);
+  }
+
+  /** One batch and its status, from pending_approval to executed. */
+  getBatch(batchId: string) {
+    return this.partner.getBatch(batchId);
+  }
+
+  /** Your latest batches. */
+  listBatches(params?: Parameters<PartnerApi["listBatches"]>[0]) {
+    return this.partner.listBatches(params);
+  }
+
+  /** Cancel a batch. Only works before its payouts exist. */
+  cancelBatch(batchId: string) {
+    return this.partner.cancelBatch(batchId);
+  }
+
+  /** Where Loofta sends batch and payout events. Returns the secret that signs them. */
+  setWebhook(url: string | null) {
+    return this.partner.setWebhook(url);
+  }
+
+  /** Which ways your recipients can withdraw, and whether they see their history. */
+  getWithdrawOptions() {
+    return this.partner.getWithdrawOptions();
+  }
+
+  setWithdrawOptions(params: Parameters<PartnerApi["setWithdrawOptions"]>[0]) {
+    return this.partner.setWithdrawOptions(params);
+  }
+
+  /** A short-lived token for the payout portal your users see. Create it on your server, never in the browser. */
+  createPortalToken(params: Parameters<PortalApi["createToken"]>[0]) {
+    return this.portal.createToken(params);
   }
 
   /** Authenticated JSON request for the payout namespaces. */

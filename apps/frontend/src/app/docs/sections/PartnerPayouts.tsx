@@ -47,7 +47,7 @@ export function PartnerPayouts({ onNavigate }: { onNavigate: (slug: string) => v
 
 const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
 
-const batch = await loofta.partner.createBatch({
+const batch = await loofta.createBatch({
   idempotencyKey: \`payout-\${cycleId}\`, // the same key never creates a second batch
   label: "November creators",
   rows: creators.map((c) => ({
@@ -97,7 +97,7 @@ console.log(batch.approveUrl);`}
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">4. Follow its progress</h2>
       <DocsCodeBlock
-        code={`const batch = await loofta.partner.getBatch(batchId);
+        code={`const batch = await loofta.getBatch(batchId);
 // batch.status: pending_approval, approved, awaiting_funding, executed, cancelled or rejected
 // batch.items[i].withdrawn: true once that person has withdrawn it`}
       />
@@ -110,7 +110,7 @@ console.log(batch.approveUrl);`}
         Loofta holds no keys, so a schedule can never spend money on its own.
       </p>
       <DocsCodeBlock
-        code={`const batch = await loofta.partner.createBatch({
+        code={`const batch = await loofta.createBatch({
   idempotencyKey: "payout-2026-12",
   label: "December creators",
   scheduledFor: new Date("2026-12-01T09:00:00Z"),
@@ -122,11 +122,11 @@ console.log(batch.approveUrl);`}
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">List and cancel batches</h2>
       <DocsCodeBlock
-        code={`const recent = await loofta.partner.listBatches({ limit: 10 });
+        code={`const recent = await loofta.listBatches({ limit: 10 });
 
 // Call off a batch that is waiting for approval, or approved and not yet prepared.
 // Once payouts exist (awaiting funding or later) it is refused.
-await loofta.partner.cancelBatch(batchId);`}
+await loofta.cancelBatch(batchId);`}
       />
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Webhooks</h2>
@@ -134,7 +134,7 @@ await loofta.partner.cancelBatch(batchId);`}
         Get a signed message at your server instead of polling. Failed deliveries are retried for a day.
       </p>
       <DocsCodeBlock
-        code={`const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-webhook");
+        code={`const { secret } = await loofta.setWebhook("https://yourapp.com/loofta-webhook");
 // keep the secret on your server; pass null to turn webhooks off`}
       />
       <ul className="list-disc pl-5 space-y-2 text-base text-slate-400 mb-4">
@@ -184,12 +184,12 @@ export async function POST(req: Request) {
       </ul>
       <DocsCodeBlock
         code={`// Offer only USDC and tokens, and hide history
-await loofta.partner.setWithdrawOptions({
+await loofta.setWithdrawOptions({
   disabledMethods: ["bank", "p2p"],
   showHistory: false,
 });
 
-const options = await loofta.partner.getWithdrawOptions();
+const options = await loofta.getWithdrawOptions();
 // options.enabledMethods, options.disabledMethods, options.showHistory`}
       />
 
@@ -200,7 +200,7 @@ const options = await loofta.partner.getWithdrawOptions();
         signed-in user:
       </p>
       <DocsCodeBlock
-        code={`const { token } = await loofta.portal.createToken({ email: user.email });
+        code={`const { token } = await loofta.createPortalToken({ email: user.email });
 return Response.json({ token });`}
       />
       <DocsCodeBlock

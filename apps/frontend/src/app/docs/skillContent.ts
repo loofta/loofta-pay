@@ -337,7 +337,7 @@ import { LooftaPayClient } from "@loofta/pay-sdk";
 
 const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
 
-const batch = await loofta.partner.createBatch({
+const batch = await loofta.createBatch({
   idempotencyKey: \`payout-\${cycleId}\`, // reuse the same key on retry, it never creates a second batch
   label: "November creators",
   rows: creators.map((c) => ({ email: c.email, amount: c.owed, externalRef: c.id })),
@@ -364,7 +364,7 @@ emailed once it is funded.
 ## 4. Follow progress
 
 \`\`\`ts
-const b = await loofta.partner.getBatch(batchId);
+const b = await loofta.getBatch(batchId);
 // b.status: pending_approval | approved | awaiting_funding | executed | cancelled | rejected
 // b.items[i].withdrawn is true once that person withdrew
 \`\`\`
@@ -374,19 +374,19 @@ Poll this from your own admin screen, or use webhooks (below).
 ## 4b. Schedule a batch (optional)
 
 \`\`\`ts
-await loofta.partner.createBatch({ idempotencyKey, rows, scheduledFor: new Date("2026-12-01T09:00:00Z") });
+await loofta.createBatch({ idempotencyKey, rows, scheduledFor: new Date("2026-12-01T09:00:00Z") });
 \`\`\`
 
 \`scheduledFor\` is 5 minutes to 90 days ahead. The batch is still approved by a person first. At the time, Loofta
 creates the payouts and asks the company wallet's signers to fund them. A schedule NEVER sends money by itself,
 so do not tell the user it will pay automatically. If the run fails, \`batch.scheduledError\` says why.
 
-Also: \`loofta.partner.listBatches({ limit })\` and \`loofta.partner.cancelBatch(id)\` (only before payouts exist).
+Also: \`loofta.listBatches({ limit })\` and \`loofta.cancelBatch(id)\` (only before payouts exist).
 
 ## 4c. Webhooks (optional)
 
 \`\`\`ts
-const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-webhook"); // store as LOOFTA_WEBHOOK_SECRET
+const { secret } = await loofta.setWebhook("https://yourapp.com/loofta-webhook"); // store as LOOFTA_WEBHOOK_SECRET
 \`\`\`
 
 Events: batch.created, batch.approved, batch.ready_to_fund, batch.executed, batch.cancelled, batch.schedule_failed,
@@ -399,8 +399,8 @@ payout.funded, payout.claimed, payout.withdrawn (carries partner_fee_usdc, net_u
 Every cash-out route and the payout history are ON by default. Only change them if the user asks.
 
 \`\`\`ts
-await loofta.partner.setWithdrawOptions({ disabledMethods: ["bank", "p2p"], showHistory: false });
-const o = await loofta.partner.getWithdrawOptions(); // o.enabledMethods, o.disabledMethods, o.showHistory
+await loofta.setWithdrawOptions({ disabledMethods: ["bank", "p2p"], showHistory: false });
+const o = await loofta.getWithdrawOptions(); // o.enabledMethods, o.disabledMethods, o.showHistory
 \`\`\`
 
 Methods: \`usdc\` (USDC on Solana), \`token\` (other tokens), \`bank\` (bank or card), \`p2p\` (Wise, PayPal, Revolut...).
@@ -411,7 +411,7 @@ At least one must stay on. Send only the fields to change. This never touches fe
 Server, for the signed-in user:
 
 \`\`\`ts
-const { token } = await loofta.portal.createToken({ email: user.email });
+const { token } = await loofta.createPortalToken({ email: user.email });
 return Response.json({ token });
 \`\`\`
 

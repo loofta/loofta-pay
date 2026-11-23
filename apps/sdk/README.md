@@ -69,7 +69,7 @@ partner portal first (it is off by default).
 ```ts
 const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
 
-const batch = await loofta.partner.createBatch({
+const batch = await loofta.createBatch({
   idempotencyKey: "2026-11-creator-payouts", // the same key never creates a second batch
   label: "November creators",
   rows: [
@@ -80,7 +80,7 @@ const batch = await loofta.partner.createBatch({
 
 redirect(batch.approveUrl); // your admin approves and pays it
 
-const status = await loofta.partner.getBatch(batch.batchId); // pending_approval ... executed
+const status = await loofta.getBatch(batch.batchId); // pending_approval ... executed
 ```
 
 Rows are email addresses, 1 to 100 per batch, $1 to $10,000 each.
@@ -92,10 +92,10 @@ schedule never sends money by itself.
 **List, cancel, and get told.**
 
 ```ts
-await loofta.partner.listBatches({ limit: 10 });
-await loofta.partner.cancelBatch(batchId); // only before payouts exist
+await loofta.listBatches({ limit: 10 });
+await loofta.cancelBatch(batchId); // only before payouts exist
 
-const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-webhook");
+const { secret } = await loofta.setWebhook("https://yourapp.com/loofta-webhook");
 // events: batch.created, batch.approved, batch.ready_to_fund, batch.executed, batch.cancelled,
 // batch.schedule_failed, payout.funded, payout.claimed, payout.withdrawn (with your fee)
 const event = verifyWebhook<BatchWebhookEvent | PayoutWebhookEvent>(rawBody, signatureHeader, secret);
@@ -127,7 +127,7 @@ const batch = await loofta.payouts.sendBatch({
 // const { transactions } = await loofta.payouts.createBatch({ ..., senderWallet });
 
 // Your users see their payouts in your app, and withdraw on your branded Loofta page:
-const { token } = await loofta.portal.createToken({ externalUserId: "user_123" }); // for @loofta/portal components
+const { token } = await loofta.createPortalToken({ externalUserId: "user_123" }); // for @loofta/portal components
 
 // Know when someone is paid:
 const { secret } = await loofta.webhooks.set("https://app.example.com/hooks/loofta");

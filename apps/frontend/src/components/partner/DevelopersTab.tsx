@@ -140,7 +140,7 @@ export function DevelopersTab({ orgId, myRole }: { orgId: string; myRole: Partne
 const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
 
 // In the route your page calls, for the signed-in user:
-const { token } = await loofta.portal.createToken({ email: user.email });
+const { token } = await loofta.createPortalToken({ email: user.email });
 // or { platform: "twitter", handle: "bob" }, or { externalUserId: user.id }
 return Response.json({ token });`;
 
@@ -155,7 +155,7 @@ return Response.json({ token });`;
 const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
 
 // When your admin clicks "Pay creators":
-const batch = await loofta.partner.createBatch({
+const batch = await loofta.createBatch({
   idempotencyKey: \`payout-\${cycleId}\`, // the same key never creates a second batch
   label: "November creators",
   scheduledFor: new Date("2026-12-01T09:00:00Z"), // optional: we prepare it then and ask your signers to fund it
@@ -166,10 +166,10 @@ const batch = await loofta.partner.createBatch({
 redirect(batch.approveUrl);
 
 // Later, to show progress in your own admin:
-const status = await loofta.partner.getBatch(batch.batchId);
+const status = await loofta.getBatch(batch.batchId);
 
 // Or get told: signed events when a batch is ready, funded, or a recipient cashes out.
-const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-webhook");`;
+const { secret } = await loofta.setWebhook("https://yourapp.com/loofta-webhook");`;
 
   const html = `<div id="payouts"></div>
 <script src="https://unpkg.com/@loofta/portal/dist/loofta-portal.global.js"></script>
