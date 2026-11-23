@@ -4,7 +4,7 @@ import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { PartnerPayoutsService } from './partner-payouts.service';
-import { ApproveBatchDto, ConfirmBatchDto, CreatePartnerBatchDto, PrepareBatchDto } from './dto/partner-batch.dto';
+import { ApproveBatchDto, CancelPayoutsDto, ConfirmBatchDto, CreatePartnerBatchDto, PrepareBatchDto } from './dto/partner-batch.dto';
 
 type Caller = { id: string };
 
@@ -43,6 +43,13 @@ export class PartnerBatchesController {
   @RateLimit(10, 60, 'partners:payout-cancel')
   cancelPayout(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Param('paymentId') paymentId: string) {
     return this.payouts.cancelPayout(orgId, user.id, paymentId);
+  }
+
+  @Post('batches/:batchId/cancel-payouts')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(6, 60, 'partners:batch-cancel-payouts')
+  cancelBatchPayouts(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Param('batchId') batchId: string, @Body() dto: CancelPayoutsDto) {
+    return this.payouts.cancelBatchPayouts(orgId, user.id, batchId, dto.payment_ids);
   }
 
   @Get('batches')

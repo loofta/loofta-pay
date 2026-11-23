@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BatchBuilder, type DraftRow } from "./BatchBuilder";
 import { Btn, Notice, PageHeader, Pill, Row, Section, Table } from "./ui";
 import { post, usd, usePartnerApi, type PartnerRole } from "./usePartnerApi";
-import type { Treasury, TreasuryState } from "./useTreasury";
+import { notifyTreasuryChanged, type Treasury, type TreasuryState } from "./useTreasury";
 import { ProposalsPanel } from "./WalletTab";
 
 type Item = {
   row_index: number;
+  payment_id: string | null;
   recipient_type: string;
   recipient_identifier: string;
   amount: number;
@@ -68,6 +69,7 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const canCreate = myRole === "owner" || myRole === "admin" || myRole === "payer";
   const canApprove = myRole === "owner" || myRole === "admin";
@@ -95,6 +97,30 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
     }
   };
 
+  useEffect(() => setPicked(new Set()), [open?.id]);
+
+  /** A payout the company can still take back: funded, not withdrawn, not already taken back. */
+  const takeBackable = (i: Item) => i.status === "funded" && !!i.payment_id && !i.withdrawn && i.payment_status !== "CANCELLED";
+
+  /** Sends the money of the chosen payouts (or every funded one) back to the company wallet. */
+  const takeBack = (b: Batch, ids?: string[]) => {
+    const rows = (b.items ?? []).filter((i) => takeBackable(i) && (!ids || ids.includes(i.payment_id as string)));
+    if (!rows.length) return Promise.resolve();
+    const total = rows.reduce((a, i) => a + i.amount, 0);
+    if (!window.confirm(`Take back ${rows.length} payout${rows.length === 1 ? "" : "s"} (${usd(total)})? The money returns to your company wallet and these people will no longer be able to withdraw it.`)) return Promise.resolve();
+    return guard("takeback", async () => {
+      const out = await call<{ results: Array<{ payment_id: string; ok: boolean; error?: string }>; refunded_usdc: number }>(
+        `${base}/batches/${b.id}/cancel-payouts`,
+        post(ids ? { payment_ids: ids } : {}),
+      );
+      const failed = out.results.filter((r) => !r.ok);
+      if (out.refunded_usdc > 0) setOk(`${usd(out.refunded_usdc)} is back in your company wallet.${failed.length ? ` ${failed.length} could not be taken back.` : ""}`);
+      if (failed.length) setError(failed.map((r) => r.error).filter(Boolean).join(" "));
+      setPicked(new Set());
+      await openBatch(b.id);
+    });
+  };
+
   const guard = async (name: string, fn: () => Promise<void>) => {
     setBusy(name);
     setError(null);
@@ -106,6 +132,7 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
     } finally {
       setBusy(null);
       load();
+      notifyTreasuryChanged();
     }
   };
 
@@ -253,15 +280,43 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
           desc={`${open.item_count} payouts · ${usd(open.total_amount)}`}
           right={<Pill tone={displayStatus(open).tone} dot>{displayStatus(open).label}</Pill>}
         >
-          <Table cols={["Recipient", "Amount", "Status"]} template="minmax(0,1fr) 120px 200px">
-            {open.items?.map((i) => (
-              <Row key={i.row_index} template="minmax(0,1fr) 120px 200px">
-                <span className="truncate font-mono text-[13.5px]">{i.recipient_identifier}</span>
-                <span>{i.amount.toFixed(2)}</span>
-                <span className="text-[color:var(--pt-ink2,#C9C9D0)]">{i.error ? i.error : i.withdrawn ? "Withdrawn" : i.status === "funded" ? "Funded" : i.status}</span>
-              </Row>
-            ))}
-          </Table>
+          {(() => {
+            const pickable = canApprove && !!open.items?.some(takeBackable);
+            const template = pickable ? "36px minmax(0,1fr) 120px 200px" : "minmax(0,1fr) 120px 200px";
+            return (
+              <Table cols={pickable ? ["", "Recipient", "Amount", "Status"] : ["Recipient", "Amount", "Status"]} template={template}>
+                {open.items?.map((i) => (
+                  <Row key={i.row_index} template={template}>
+                    {pickable && (
+                      <span>
+                        {takeBackable(i) && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${i.recipient_identifier}`}
+                            className="h-5 w-5 accent-[#EA5B30]"
+                            checked={picked.has(i.payment_id as string)}
+                            onChange={(e) =>
+                              setPicked((p) => {
+                                const next = new Set(p);
+                                if (e.target.checked) next.add(i.payment_id as string);
+                                else next.delete(i.payment_id as string);
+                                return next;
+                              })
+                            }
+                          />
+                        )}
+                      </span>
+                    )}
+                    <span className="truncate font-mono text-[13.5px]">{i.recipient_identifier}</span>
+                    <span>{i.amount.toFixed(2)}</span>
+                    <span className="text-[color:var(--pt-ink2,#C9C9D0)]">
+                      {i.error ? i.error : i.withdrawn ? "Withdrawn" : i.payment_status === "CANCELLED" ? "Taken back" : i.status === "funded" ? "Funded" : i.status}
+                    </span>
+                  </Row>
+                ))}
+              </Table>
+            );
+          })()}
           {open.status === "approved" && open.scheduled_for && !open.scheduled_run_at && new Date(open.scheduled_for).getTime() > Date.now() && (
             <div className="mt-5">
               <Notice kind="info">
@@ -285,6 +340,18 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
               <Btn kind="danger" onClick={() => cancel(open)} disabled={busy !== null}>
                 Cancel batch
               </Btn>
+            )}
+            {canApprove && !!open.items?.some(takeBackable) && (
+              <>
+                {picked.size > 0 && (
+                  <Btn kind="danger" onClick={() => void takeBack(open, [...picked])} disabled={busy !== null}>
+                    {busy === "takeback" ? "Taking back..." : `Take back selected (${picked.size})`}
+                  </Btn>
+                )}
+                <Btn kind="danger" onClick={() => void takeBack(open)} disabled={busy !== null}>
+                  {busy === "takeback" ? "Taking back..." : `Take back all (${open.items.filter(takeBackable).length})`}
+                </Btn>
+              </>
             )}
             {open.status === "pending_approval" && canApprove && open.created_by_user_id !== myUserId && (
               <Btn onClick={() => approve(open)} disabled={busy !== null}>

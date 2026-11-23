@@ -689,8 +689,10 @@ export class PartnerTreasuryService {
       // Fees for this proposal's transactions: create, the other approvals, execute. Two signatures
       // each at 5,000 lamports, doubled for headroom. Never free, even when the price feed is down.
       const txCount = ms.threshold + 1;
+      // Compressed mode adds our own compress transactions after approval (about 25,000 lamports each, 15 payouts per transaction).
+      const feeLamports = txCount * 20_000 + (compressed ? Math.ceil(targets.length / COMPRESS_PER_TX) * 30_000 : 0);
       const solPrice = await fetchSolPriceUsd().catch(() => null);
-      const gasUnits = Math.max(1, Math.ceil(solPrice && solPrice > 0 ? ((txCount * 20_000) / 1e9) * solPrice * 1_000_000 : txCount * 20_000));
+      const gasUnits = Math.max(1, Math.ceil(solPrice && solPrice > 0 ? (feeLamports / 1e9) * solPrice * 1_000_000 : feeLamports));
 
       const transactionIndex = await this.claimIndex(partner.id, conn, msPda);
       const build = (count: number) => {

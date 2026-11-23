@@ -730,10 +730,45 @@ export class PartnerPayoutsService {
    */
   async cancelPayout(orgId: string, userId: string, paymentId: string) {
     const { partner } = await this.partners.requireMembership(orgId, userId, 'payout.approve');
+    return this.refundOne(partner, userId, paymentId);
+  }
+
+  private async refundOne(partner: Partner, userId: string, paymentId: string) {
     if (!partner.treasury_vault) throw new BadRequestException('Create your company wallet first.');
     const { amountUsdc, txHash } = await this.claims.refundPartnerPayout(paymentId, partner.id, partner.treasury_vault);
     await this.partners.audit(partner.id, userId, 'payout.cancelled', { type: 'payout', id: paymentId }, { amount_usdc: amountUsdc, tx: txHash });
     return { payment_id: paymentId, refunded_usdc: amountUsdc, tx_hash: txHash };
+  }
+
+  /**
+   * Takes several payouts of one batch back, one after the other (never in parallel, so one failure cannot hide another).
+   * With no list it takes back every payout of the batch that is funded and not withdrawn. Each payout reports its own
+   * result: a payout that cannot be taken back (already withdrawn, being withdrawn right now) never blocks the others.
+   */
+  async cancelBatchPayouts(orgId: string, userId: string, batchId: string, paymentIds?: string[]) {
+    const { partner } = await this.partners.requireMembership(orgId, userId, 'payout.approve');
+    await this.getOwnedBatch(partner.id, batchId);
+    const items = await this.getItems(batchId);
+    const funded = items.filter((i) => i.payment_id && i.status === 'funded').map((i) => i.payment_id as string);
+    // Only payouts that are still funded: a payout already cancelled or withdrawn is skipped, not reported as a failure.
+    const { data: rows } = funded.length
+      ? await this.supabase.payments.select('id, status, partner_withdrawn_at').in('id', funded).eq('partner_id', partner.id)
+      : { data: [] as Array<{ id: string; status: string; partner_withdrawn_at: string | null }> };
+    const open = (rows ?? [])
+      .filter((r) => !r.partner_withdrawn_at && ['PRIVATE_TRANSFER_PENDING', 'SUCCESS'].includes(String(r.status).toUpperCase()))
+      .map((r) => r.id as string);
+    const targets = (paymentIds?.length ? paymentIds : open).filter((id) => open.includes(id));
+    if (!targets.length) throw new BadRequestException('There is nothing in this batch to take back.');
+    const results: Array<{ payment_id: string; ok: boolean; refunded_usdc?: number; error?: string }> = [];
+    for (const id of targets) {
+      try {
+        const r = await this.refundOne(partner, userId, id);
+        results.push({ payment_id: id, ok: true, refunded_usdc: r.refunded_usdc });
+      } catch (e) {
+        results.push({ payment_id: id, ok: false, error: (e as Error).message || 'Could not take this payout back.' });
+      }
+    }
+    return { results, refunded_usdc: Math.round(results.reduce((a, r) => a + (r.refunded_usdc ?? 0), 0) * 1e6) / 1e6 };
   }
 
   /** Small numbers for the sidebar badges. */

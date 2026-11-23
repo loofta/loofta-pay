@@ -45,6 +45,17 @@ export class PrepareBatchDto {
   sender_wallet?: string;
 }
 
+export class CancelPayoutsDto {
+  @ApiProperty({ type: [String], required: false, description: 'Payments to take back. Leave out to take back every funded payout in the batch.' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_BATCH_ROWS)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  payment_ids?: string[];
+}
+
 export class ConfirmBatchDto {
   @ApiProperty({ type: [String], description: 'Signatures of the funding transactions that were broadcast' })
   @IsArray()

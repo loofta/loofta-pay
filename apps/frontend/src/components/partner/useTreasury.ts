@@ -57,6 +57,13 @@ export type TreasuryState =
     };
 export type UnsignedTx = { proposal_id: string; unsigned_transaction: string };
 
+const TREASURY_CHANGED = "loofta:treasury-changed";
+
+/** Call after anything that moves money in or out of the company wallet (a payout sent, a payout taken back). Every open wallet view refreshes. */
+export function notifyTreasuryChanged() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(TREASURY_CHANGED));
+}
+
 /**
  * The partner's company wallet (a Squads multisig): its state, and the one way to act on it. Every
  * transaction is built by the server and signed here with the member's own Loofta wallet.
@@ -83,6 +90,20 @@ export function useTreasury(orgId: string | null, enabled: boolean) {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // Money moved somewhere else in the portal: refresh now, and again shortly after, because the chain and the funding job take a few seconds to settle.
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const onChanged = () => {
+      void refresh();
+      timers.push(setTimeout(() => void refresh(), 4000), setTimeout(() => void refresh(), 12000));
+    };
+    window.addEventListener(TREASURY_CHANGED, onChanged);
+    return () => {
+      window.removeEventListener(TREASURY_CHANGED, onChanged);
+      timers.forEach(clearTimeout);
+    };
   }, [refresh]);
 
   /** Signs a server-built transaction with this member's wallet, sends it and waits for it. */

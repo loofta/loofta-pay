@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Btn, Notice, PageHeader, Pill, Row, Segmented, StatCard, Table, inputCls } from "./ui";
 import { post, usd, usePartnerApi } from "./usePartnerApi";
+import { notifyTreasuryChanged } from "./useTreasury";
 
 type Stage = "created" | "funded" | "claimed" | "withdrawn" | "cancelled";
 type Payout = {
@@ -63,6 +64,7 @@ export function ActivityTab({ orgId }: { orgId: string }) {
       const out = await call<{ refunded_usdc: number }>(`partners/${encodeURIComponent(orgId)}/payouts/${encodeURIComponent(r.payment_id)}/cancel`, post());
       setDone(`${usd(out.refunded_usdc)} is back in your company wallet.`);
       load();
+      notifyTreasuryChanged();
     } catch (e) {
       setError((e as Error).message);
     } finally {
