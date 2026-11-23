@@ -180,6 +180,10 @@ export async function POST(request: Request) {
       const min = minimumFrom(lastData);
       if (min) return json({ country, supported: true, options: [], error: min });
       console.error(`${LOG} no ${side} quotes for ${country} ${amount}:`, JSON.stringify(lastData));
+      // A country we know works, but too small an amount: providers refuse bank cash-outs under about $10. Say that, not "not in your country".
+      if (side === "sell" && MELD_SELL_COUNTRIES.has(country)) {
+        return json({ country, supported: true, options: [], error: `This amount is too low for a bank cash-out. The minimum is about $10.` });
+      }
       return json({ country, supported: side === "buy", options: [] });
     }
 

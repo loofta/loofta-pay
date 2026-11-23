@@ -67,7 +67,7 @@ const NEXT_METHOD: Partial<Record<Method, "crypto" | "peer">> = { token: "crypto
 const METHODS: Record<Method, { title: string; hint: string; badge?: string; icons: { src: string; bg: string }[] }> = {
   usdc: { title: "USDC on Solana", hint: "To any Solana wallet, in seconds", badge: "Fastest", icons: [{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/solana-mark.svg", bg: "#111" }] },
   token: { title: "Other tokens", hint: "BTC, ETH and other chains, a few minutes", icons: [{ src: "/images/btc.svg", bg: "#F7931A" }, { src: "/images/eth.svg", bg: "#627EEA" }] },
-  bank: { title: "Bank or cards", hint: "Bank, card or PAJ Cash, time set by your provider", icons: [{ src: "/images/icons/card-chip.svg", bg: "#1C1C22" }] },
+  bank: { title: "Bank or cards", hint: "Bank or card, time set by your provider", icons: [{ src: "/images/icons/card-chip.svg", bg: "#1C1C22" }] },
   p2p: { title: "Private P2P", hint: "Wise, PayPal, Revolut and more. From $10", icons: [{ src: "/images/platforms/revolut.png", bg: "#1C1C22" }, { src: "/images/platforms/venmo.png", bg: "#008CFF" }] },
 };
 const GROUPS: Record<Group, Method[]> = { crypto: ["usdc", "token"], cash: ["bank", "p2p"] };
@@ -199,6 +199,8 @@ function WithdrawContent() {
   const belowMin = hasPayouts && !!quote && quote.gross_usdc < quote.min_usd;
   // P2P always pays out a little under the market rate so a buyer fills it fast. The recipient sees that before confirming.
   const p2pMin = quote?.p2p_min_usd ?? 10;
+  /** Bank cash-out providers refuse amounts under about $10. */
+  const BANK_MIN = 10;
   const p2pRate = quote?.p2p_rate_percent ?? 1;
   const p2pBelow = method === "p2p" && !!quote && quote.gross_usdc < p2pMin;
   const p2pCut = method === "p2p" && quote ? Math.round(quote.net_usdc * p2pRate) / 100 : 0;
@@ -403,7 +405,7 @@ function WithdrawContent() {
                   )}
                   <p className="mt-1 text-sm font-semibold tracking-[0.14em] text-[color:var(--pt-ink3,#8A8893)]">SEND FUNDS TO</p>
                   {GROUPS[activeGroup].filter(on).map((m) => (
-                    <MethodRow key={m} method={m} onClick={() => setMethod(m)} disabled={m === "p2p" && quote.gross_usdc < p2pMin} note={m === "p2p" && quote.gross_usdc < p2pMin ? `Available from ${usd(p2pMin)}` : undefined} />
+                    <MethodRow key={m} method={m} onClick={() => setMethod(m)} disabled={(m === "p2p" && quote.gross_usdc < p2pMin) || (m === "bank" && quote.gross_usdc < BANK_MIN)} note={m === "p2p" && quote.gross_usdc < p2pMin ? `Available from ${usd(p2pMin)}` : m === "bank" && quote.gross_usdc < BANK_MIN ? `Available from ${usd(BANK_MIN)}` : undefined} />
                   ))}
                 </div>
               )}

@@ -791,9 +791,51 @@ export class PartnerPayoutsService {
     const { data } = await this.supabase.payoutBatches
       .select(BATCH_COLUMNS)
       .eq('partner_id', partner.id)
+      .neq('status', 'deleted')
       .order('created_at', { ascending: false })
       .limit(50);
-    return data ?? [];
+    return this.withTakenBack((data ?? []) as unknown as BatchRow[]);
+  }
+
+  /**
+   * A batch whose every payout was taken back is cancelled, and taken-back payouts are not part of what was paid.
+   * Derived on read from the payments, so it holds however the payouts were taken back.
+   */
+  private async withTakenBack<T extends BatchRow>(batches: T[]): Promise<T[]> {
+    const live = batches.filter((b) => ['executed', 'awaiting_funding'].includes(b.status));
+    if (!live.length) return batches;
+    const { data: items } = await this.supabase.payoutBatchItems
+      .select('batch_id, amount, payment_id, status')
+      .in('batch_id', live.map((b) => b.id));
+    const ids = (items ?? []).map((i) => i.payment_id).filter((id): id is string => !!id);
+    const { data: pays } = ids.length ? await this.supabase.payments.select('id, status').in('id', ids) : { data: [] as Array<{ id: string; status: string }> };
+    const cancelled = new Set((pays ?? []).filter((p) => String(p.status).toUpperCase() === 'CANCELLED').map((p) => p.id as string));
+    return batches.map((b) => {
+      const mine = (items ?? []).filter((i) => i.batch_id === b.id && i.status !== 'failed');
+      const taken = mine.filter((i) => i.payment_id && cancelled.has(i.payment_id as string));
+      if (!taken.length) return b;
+      const left = mine.length - taken.length;
+      const takenAmount = taken.reduce((a, i) => a + Number(i.amount), 0);
+      return {
+        ...b,
+        status: left === 0 ? 'cancelled' : b.status,
+        total_amount: Math.round((Number(b.total_amount) - takenAmount) * 1e6) / 1e6,
+        item_count: left,
+      };
+    });
+  }
+
+  /** Removes a cancelled batch from the list. Only a batch with no live money; the row is kept for the audit trail. */
+  async remove(orgId: string, userId: string, batchId: string) {
+    const { partner, member } = await this.partners.requireMembership(orgId, userId, 'payout.create');
+    const batch = await this.getOwnedBatch(partner.id, batchId);
+    const isReviewer = member.role === 'owner' || member.role === 'admin';
+    if (batch.created_by_user_id !== userId && !isReviewer) throw new ForbiddenException('Only the creator or an admin can remove this batch.');
+    const [effective] = await this.withTakenBack([batch]);
+    if (!['cancelled', 'rejected'].includes(effective.status)) throw new ConflictException('Only a cancelled batch can be removed. Take its payouts back first.');
+    await this.supabase.payoutBatches.update({ status: 'deleted' }).eq('id', batchId).eq('partner_id', partner.id);
+    await this.partners.audit(partner.id, userId, 'batch.deleted', { type: 'batch', id: batchId });
+    return { status: 'deleted' as const };
   }
 
   async listViaApi(integratorId: string, limit = 25) {
@@ -831,7 +873,7 @@ export class PartnerPayoutsService {
   }
 
   private async view(partnerId: string, batchId: string) {
-    const batch = await this.getOwnedBatch(partnerId, batchId);
+    const [batch] = await this.withTakenBack([await this.getOwnedBatch(partnerId, batchId)]);
     const items = await this.getItems(batchId);
     const paymentIds = items.map((i) => i.payment_id).filter((id): id is string => !!id);
     const byId = new Map<string, { status: string; partner_fee_usdc: number | null; partner_withdrawn_at: string | null }>();
@@ -839,8 +881,25 @@ export class PartnerPayoutsService {
       const { data } = await this.supabase.payments.select('id, status, partner_fee_usdc, partner_withdrawn_at').in('id', paymentIds).eq('partner_id', partnerId);
       for (const p of data ?? []) byId.set(p.id as string, p as never);
     }
+    // Money already on its way: every payout of this batch sits in a proposal that is waiting for approval, was sent,
+    // or is being moved into the recipients' balances. The page then shows progress instead of a Pay now button, so
+    // a second click can never look like a second payment.
+    let funding_in_progress = false;
+    if (batch.status === 'awaiting_funding') {
+      const open = items.filter((i) => i.status === 'created' && i.payment_id).map((i) => i.payment_id as string);
+      if (open.length) {
+        const { data: live } = await this.supabase.partnerTreasuryProposals
+          .select('payment_ids')
+          .eq('partner_id', partnerId)
+          .eq('batch_id', batchId)
+          .in('status', ['active', 'approved', 'executed']);
+        const covered = new Set((live ?? []).flatMap((r) => r.payment_ids as string[]));
+        funding_in_progress = open.every((id) => covered.has(id));
+      }
+    }
     return {
       ...batch,
+      funding_in_progress,
       items: items.map((i) => {
         const p = i.payment_id ? byId.get(i.payment_id) : undefined;
         return {

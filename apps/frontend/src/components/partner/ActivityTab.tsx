@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Btn, Notice, PageHeader, Pill, Row, Segmented, StatCard, Table, inputCls } from "./ui";
 import { post, usd, usePartnerApi } from "./usePartnerApi";
 import { notifyTreasuryChanged } from "./useTreasury";
+import { useConfirm } from "./ConfirmDialog";
 
 type Stage = "created" | "funded" | "claimed" | "withdrawn" | "cancelled";
 type Payout = {
@@ -42,6 +43,7 @@ export function ActivityTab({ orgId }: { orgId: string }) {
   const [filter, setFilter] = useState<"all" | Stage>("all");
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
   const [done, setDone] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -56,7 +58,8 @@ export function ActivityTab({ orgId }: { orgId: string }) {
 
   /** Takes a funded payout back: the money returns to the company wallet. Owners and admins only (the server checks). */
   const cancel = async (r: Payout) => {
-    if (!window.confirm(`Take back ${usd(r.amount)} sent to ${r.name ?? r.recipient ?? "this recipient"}? The money returns to your company wallet and they will no longer be able to withdraw it.`)) return;
+    const who = r.name ?? r.recipient ?? "this recipient";
+    if (!(await confirm({ title: `Take back ${usd(r.amount)}?`, body: `The money sent to ${who} returns to your company wallet, and they will no longer be able to withdraw it.`, confirmLabel: "Take back", danger: true }))) return;
     setBusy(r.payment_id);
     setError(null);
     setDone(null);
@@ -85,6 +88,7 @@ export function ActivityTab({ orgId }: { orgId: string }) {
 
   return (
     <>
+      {dialog}
       <PageHeader crumb="Partner portal / Activity" title="Who has claimed" blurb="Follow every payout from created to funded to withdrawn." />
       {error && (
         <div className="mb-6">

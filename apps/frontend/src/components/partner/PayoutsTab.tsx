@@ -6,6 +6,7 @@ import { Btn, Notice, PageHeader, Pill, Row, Section, Table } from "./ui";
 import { post, usd, usePartnerApi, type PartnerRole } from "./usePartnerApi";
 import { notifyTreasuryChanged, type Treasury, type TreasuryState } from "./useTreasury";
 import { ProposalsPanel } from "./WalletTab";
+import { useConfirm } from "./ConfirmDialog";
 
 type Item = {
   row_index: number;
@@ -31,6 +32,7 @@ type Batch = {
   scheduled_for?: string | null;
   scheduled_run_at?: string | null;
   scheduled_error?: string | null;
+  funding_in_progress?: boolean;
   items?: Item[];
 };
 
@@ -70,6 +72,7 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
   const [ok, setOk] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const { confirm, dialog } = useConfirm();
 
   const canCreate = myRole === "owner" || myRole === "admin" || myRole === "payer";
   const canApprove = myRole === "owner" || myRole === "admin";
@@ -99,15 +102,27 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
 
   useEffect(() => setPicked(new Set()), [open?.id]);
 
+  // Money is on its way (waiting for approval, or being moved to the recipients): keep the batch fresh until it is done.
+  const openId = open?.id;
+  const inProgress = !!open?.funding_in_progress;
+  useEffect(() => {
+    if (!openId || !inProgress) return;
+    const t = setInterval(() => {
+      call<Batch>(`${base}/batches/${openId}`).then((b) => (setOpen((cur) => (cur?.id === b.id ? b : cur)), load())).catch(() => undefined);
+    }, 4000);
+    return () => clearInterval(t);
+  }, [openId, inProgress, call, base, load]);
+
   /** A payout the company can still take back: funded, not withdrawn, not already taken back. */
   const takeBackable = (i: Item) => i.status === "funded" && !!i.payment_id && !i.withdrawn && i.payment_status !== "CANCELLED";
 
   /** Sends the money of the chosen payouts (or every funded one) back to the company wallet. */
-  const takeBack = (b: Batch, ids?: string[]) => {
+  const takeBack = async (b: Batch, ids?: string[]) => {
     const rows = (b.items ?? []).filter((i) => takeBackable(i) && (!ids || ids.includes(i.payment_id as string)));
-    if (!rows.length) return Promise.resolve();
+    if (!rows.length) return;
     const total = rows.reduce((a, i) => a + i.amount, 0);
-    if (!window.confirm(`Take back ${rows.length} payout${rows.length === 1 ? "" : "s"} (${usd(total)})? The money returns to your company wallet and these people will no longer be able to withdraw it.`)) return Promise.resolve();
+    const many = rows.length === 1 ? "this payout" : `these ${rows.length} payouts`;
+    if (!(await confirm({ title: `Take back ${usd(total)}?`, body: `The money of ${many} returns to your company wallet, and ${rows.length === 1 ? "they" : "these people"} will no longer be able to withdraw ${rows.length === 1 ? "it" : "it"}.`, confirmLabel: rows.length === 1 ? "Take back" : `Take back ${rows.length}`, danger: true }))) return;
     return guard("takeback", async () => {
       const out = await call<{ results: Array<{ payment_id: string; ok: boolean; error?: string }>; refunded_usdc: number }>(
         `${base}/batches/${b.id}/cancel-payouts`,
@@ -178,6 +193,15 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
       setOpen(null);
     });
 
+  const removeBatch = async (b: Batch) => {
+    if (!(await confirm({ title: "Remove this batch?", body: "It is cancelled, so no money is involved. It disappears from your list.", confirmLabel: "Remove", danger: true }))) return;
+    return guard("remove", async () => {
+      await call(`${base}/batches/${b.id}`, { method: "DELETE" });
+      setOpen(null);
+      load();
+    });
+  };
+
   /**
    * Prepare (the server creates the burner payouts), then build one proposal per chunk and sign each
    * with this member's wallet. When that signature is enough on its own (a company wallet that needs
@@ -209,12 +233,15 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
       }
       await treasury.refresh();
       if (!made) throw new Error("Nothing to fund. Check the rows for errors.");
+      const fresh = await call<Batch>(`${base}/batches/${b.id}`);
+      setOpen(fresh);
       setOk(
-        sent === made
-          ? "Paid. Recipients have been notified."
-          : `${made - sent} step${made - sent === 1 ? "" : "s"} waiting for approval. Your signers approve them under Wallet, then they are sent.`,
+        sent !== made
+          ? `${made - sent} step${made - sent === 1 ? "" : "s"} waiting for approval. Your signers approve them under Wallet, then they are sent.`
+          : fresh.status === "executed"
+            ? "Paid. Recipients have been notified."
+            : "Sent. The money is being moved to your recipients, this takes under a minute. They are notified when it lands.",
       );
-      await openBatch(b.id);
     });
 
   const showBuilder = canCreate && loaded && (creating || batches.length === 0);
@@ -222,6 +249,7 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
 
   return (
     <>
+      {dialog}
       <PageHeader
         crumb="Partner portal / Payouts"
         title="Pay your people"
@@ -336,6 +364,11 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
             <Btn kind="ghost" onClick={() => setOpen(null)}>
               Close
             </Btn>
+            {(open.status === "cancelled" || open.status === "rejected") && canCreate && (
+              <Btn kind="danger" onClick={() => void removeBatch(open)} disabled={busy !== null}>
+                {busy === "remove" ? "Removing..." : "Remove batch"}
+              </Btn>
+            )}
             {(open.status === "pending_approval" || open.status === "approved") && canCreate && (
               <Btn kind="danger" onClick={() => cancel(open)} disabled={busy !== null}>
                 Cancel batch
@@ -361,16 +394,16 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
             {(open.status === "approved" || open.status === "awaiting_funding") && canCreate && (
               <Btn
                 onClick={() => fund(open)}
-                disabled={busy !== null || !canPropose || (open.status === "approved" && !!open.scheduled_for && !open.scheduled_run_at && new Date(open.scheduled_for).getTime() > Date.now())}
+                disabled={busy !== null || !!open.funding_in_progress || !canPropose || (open.status === "approved" && !!open.scheduled_for && !open.scheduled_run_at && new Date(open.scheduled_for).getTime() > Date.now())}
               >
-                {busy === "fund" ? "Paying..." : solo ? "Pay now" : "Send for approval"}
+                {busy === "fund" ? "Paying..." : open.funding_in_progress ? "Sending..." : solo ? "Pay now" : "Send for approval"}
               </Btn>
             )}
           </div>
         </Section>
       )}
 
-      {!showBuilder && (
+      {!showBuilder && !open && (
         <Section title="Payouts" desc="Ready to send first, then everything you have drafted or paid.">
           {!loaded ? (
             <p className="text-[15px] text-[color:var(--pt-ink2,#C9C9D0)]">Loading...</p>

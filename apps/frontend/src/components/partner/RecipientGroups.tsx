@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Notice, inputCls } from "./ui";
 import { patch, post, usePartnerApi } from "./usePartnerApi";
+import { useConfirm } from "./ConfirmDialog";
 
 export type Group = {
   id: string;
@@ -53,6 +54,7 @@ export function RecipientGroups({
   onChanged: () => void;
 }) {
   const call = usePartnerApi();
+  const { confirm, dialog } = useConfirm();
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -97,6 +99,7 @@ export function RecipientGroups({
 
   return (
     <div className="flex flex-col gap-4">
+      {dialog}
       {error && <Notice kind="error">{error}</Notice>}
       {ok && <Notice kind="ok">{ok}</Notice>}
 
@@ -160,8 +163,8 @@ export function RecipientGroups({
                 <Btn kind="ghost" onClick={() => setPanel(panel === "add" ? null : "add")}>Add people</Btn>
                 <Btn kind="ghost" onClick={() => { setUrl(""); setPanel(panel === "link" ? null : "link"); }}>{current.linked ? "Change link" : "Link a URL"}</Btn>
                 <Btn kind="ghost" onClick={() => { setName(current.name); setPanel(panel === "rename" ? null : "rename"); }}>Rename</Btn>
-                <Btn kind="danger" disabled={busy !== null} onClick={() => {
-                  if (!window.confirm(`Delete the group "${current.name}"? The people stay in your recipients.`)) return;
+                <Btn kind="danger" disabled={busy !== null} onClick={async () => {
+                  if (!(await confirm({ title: `Delete "${current.name}"?`, body: "The group is removed. The people stay in your recipients.", confirmLabel: "Delete group", danger: true }))) return;
                   void run("delete", async () => {
                     await call(`${base}/groups/${current.id}`, { method: "DELETE" });
                     onSelect(null);

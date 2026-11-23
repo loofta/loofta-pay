@@ -143,7 +143,7 @@ export async function POST(request: Request) {
     }
     if (!quotes.length) {
       console.error(`${LOG} No Meld quote ${quoteStatus} for ${countryCode} (base ${MELD_API_BASE}):`, JSON.stringify(quoteData));
-      return new NextResponse(JSON.stringify({ error: tooLow(quoteData) ?? `Bank cash-out isn't available in your country yet (ref quote ${quoteStatus}).` }), { status: 502, headers });
+      return new NextResponse(JSON.stringify({ error: tooLow(quoteData) ?? (MELD_SELL_COUNTRIES.has(countryCode) && Number(amount ?? 0) < 10 ? `This amount is too low for a bank cash-out. The minimum is about $10.` : `Bank cash-out isn't available in your country yet (ref quote ${quoteStatus}).`) }), { status: 502, headers });
     }
     // Providers with the redirect flow first (best quote within each group); fall through if one refuses the session
     const preferFirst = <T extends { serviceProvider: string }>(list: T[]) => [...list].sort((a, b) => Number(b.serviceProvider === chosenProvider) - Number(a.serviceProvider === chosenProvider));

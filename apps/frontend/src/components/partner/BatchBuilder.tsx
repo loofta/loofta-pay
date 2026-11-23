@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Btn, Field, Notice, Pill, Row, Section, Segmented, Table, inputCls } from "./ui";
 import { usd, usePartnerApi } from "./usePartnerApi";
+import { NiceSelect } from "@/components/ui/NiceSelect";
 
 export const MAX_ROWS = 100;
 const MIN_AMOUNT = 1; // the server rejects anything under $1
@@ -109,12 +110,13 @@ function GroupPicker({ base, onAdd }: { base: string; onAdd: (rows: DraftRow[]) 
       {error && <p className="m-0 text-[14px] text-[#D8481A]">{error}</p>}
       <div className="flex flex-wrap items-end gap-4">
         <Field label="Group">
-          <select className={`${inputCls} min-w-[220px]`} value={id} onChange={(e) => setId(e.target.value)}>
-            <option value="">Choose a group</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name} ({g.member_count})</option>
-            ))}
-          </select>
+          <NiceSelect
+            className="min-w-[240px]"
+            value={id}
+            onChange={setId}
+            placeholder="Choose a group"
+            options={groups.map((g) => ({ value: g.id, label: g.name, hint: `${g.member_count} ${g.member_count === 1 ? "person" : "people"}` }))}
+          />
         </Field>
         <Field label="Amount for each (USDC)">
           <input className={`${inputCls} w-40`} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -213,7 +215,8 @@ function SavedPicker({ base, onAdd }: { base: string; onAdd: (rows: DraftRow[]) 
  * sent or funded from here: it only prepares the rows for the approval flow.
  */
 export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows: DraftRow[], label: string, scheduledFor?: string) => Promise<boolean> }) {
-  const [source, setSource] = useState<Source>("upload");
+  // The people already saved come first: a batch usually pays the people you already have. Importing a list lives under Recipients.
+  const [source, setSource] = useState<Source>("saved");
   const [rows, setRows] = useState<DraftRow[]>([]);
   const [label, setLabel] = useState("");
   const [runAt, setRunAt] = useState("");
@@ -292,7 +295,7 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
     <Section
       title="New batch"
       desc="Bring a list of people and amounts. Every row is checked before anything is saved."
-      right={<Segmented<Source> value={source} onChange={setSource} options={[{ value: "upload", label: "Upload file" }, { value: "paste", label: "Paste" }, { value: "saved", label: "Saved recipients" }, { value: "group", label: "From a group" }]} />}
+      right={<Segmented<Source> value={source} onChange={setSource} options={[{ value: "saved", label: "Saved recipients" }, { value: "group", label: "From a group" }, { value: "paste", label: "Paste" }, { value: "upload", label: "Upload file" }]} />}
     >
       <div className="flex flex-col gap-6">
         {source === "upload" && (

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
@@ -83,6 +83,12 @@ export class PartnerBatchesController {
   @RateLimit(20, 60, 'partners:batches-cancel')
   cancel(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Param('batchId') batchId: string) {
     return this.payouts.cancel(orgId, user.id, batchId);
+  }
+
+  @Delete('batches/:batchId')
+  @RateLimit(20, 60, 'partners:batches-delete')
+  remove(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Param('batchId') batchId: string) {
+    return this.payouts.remove(orgId, user.id, batchId);
   }
 
   @Post('batches/:batchId/prepare')

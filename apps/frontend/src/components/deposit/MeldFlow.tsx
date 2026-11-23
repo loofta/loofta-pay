@@ -69,6 +69,7 @@ export function MeldFlow({
   getAccessToken,
   onBack,
   partnerWithdraw,
+  onPaj,
 }: {
   side: "buy" | "sell";
   solanaAddress: string;
@@ -77,6 +78,8 @@ export function MeldFlow({
   onBack: () => void;
   /** A partner payout not yet claimed: remembered for the return page, which claims it on the final Send step. */
   partnerWithdraw?: { orgId: string; maxFeeUsdc: number };
+  /** PAJ Cash (Naira bank transfer), offered only to people in Nigeria. Left out everywhere else, so it is never named to them. */
+  onPaj?: () => void;
 }) {
   const { toast } = useToast();
   const [amount, setAmount] = useState(side === "buy" ? "50" : "");
@@ -205,8 +208,13 @@ export function MeldFlow({
         <button type="button" onClick={onBack} className="self-start text-sm font-semibold text-[color:var(--pt-ink2,#C8C6D0)] hover:text-[color:var(--pt-ink,#fff)]">Back</button>
         <div className="rounded-2xl border border-[color:var(--pt-w10,rgba(255,255,255,0.1))] bg-[color:var(--pt-surface3,#1A1A20)] p-4">
           <p className="text-base font-bold text-[color:var(--pt-ink,#fff)]" style={{ fontFamily: SORA }}>Bank cash-out isn&apos;t available in your country yet</p>
-          <p className="mt-1.5 text-sm text-[color:var(--pt-ink2,#C8C6D0)]">Use PAJ Cash or Private P2P instead. Both are on the previous screen.</p>
+          <p className="mt-1.5 text-sm text-[color:var(--pt-ink2,#C8C6D0)]">{onPaj ? "Cash out to a Nigerian bank with PAJ Cash, or use Private P2P." : "Use Private P2P instead. It is on the previous screen."}</p>
         </div>
+        {onPaj && (
+          <button type="button" onClick={onPaj} className="w-full rounded-2xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-4 text-center text-base font-bold text-white hover:opacity-90">
+            Use PAJ Cash
+          </button>
+        )}
       </div>
     );
   }

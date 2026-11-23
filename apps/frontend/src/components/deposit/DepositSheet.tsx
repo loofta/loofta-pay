@@ -26,6 +26,7 @@ import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
 import { previewRelayWithdrawal, prepareRelayWithdrawal } from "@/services/relayWithdraw";
 import { RELAY_TOKENS, RELAY_MIN_WITHDRAW_USDC, isRelayToken, relayAssetKey } from "@/lib/relayAssets";
 import { MeldFlow } from "@/components/deposit/MeldFlow";
+import { getClientGeo } from "@/lib/geo";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { addWithdrawal } from "@/lib/withdrawalHistory";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
@@ -50,6 +51,17 @@ import type { TokenSelection } from "@/app/utils/types";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
+
+/** True only for people located in Nigeria. PAJ Cash (Naira) is offered to them and never shown or named to anyone else. */
+function useIsNigeria(): boolean {
+  const [ng, setNg] = useState(false);
+  useEffect(() => {
+    let on = true;
+    getClientGeo().then((g) => { if (on) setNg(g.countryCode === "NG"); }).catch(() => undefined);
+    return () => { on = false; };
+  }, []);
+  return ng;
+}
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 const SUCCESS = new Set(["SUCCESS", "COMPLETED"]);
 const TERMINAL = new Set(["SUCCESS", "COMPLETED", "REFUNDED", "FAILED", "EXPIRED"]);
@@ -126,6 +138,7 @@ export function DepositSheet({
   cryptoPrefill?: CryptoPrefill | null;
 }) {
   const { toast } = useToast();
+  const isNigeria = useIsNigeria();
   const { user, getAccessToken } = usePrivy();
   const { data: tokens = [] } = useTokensQuery();
   const [screen, setScreen] = useState<Screen>("home");
@@ -339,7 +352,7 @@ export function DepositSheet({
                 />
                 <MethodRow
                   title="Bank app"
-                  hint={privately ? "Card, Apple Pay, Revolut, Venmo, Cash App. Not private." : "Card, Apple Pay, PAJ Cash, Revolut, Venmo, Cash App"}
+                  hint={privately ? "Card, Apple Pay, Revolut, Venmo, Cash App. Not private." : isNigeria && PAJ_CASH_ENABLED ? "Card, Apple Pay, PAJ Cash, Revolut, Venmo, Cash App" : "Card, Apple Pay, Revolut, Venmo, Cash App"}
                   onClick={() => setScreen("card")}
                   icons={[
                     { src: "/images/platforms/revolut.png", bg: "#1C1C22" },
@@ -368,7 +381,7 @@ export function DepositSheet({
             />
             <MethodRow
               title="Cards or bank"
-              hint="Card, Apple Pay, bank transfer, PAJ Cash, Revolut, Venmo, Cash App"
+              hint={isNigeria && PAJ_CASH_ENABLED ? "Card, Apple Pay, bank transfer, PAJ Cash, Revolut, Venmo, Cash App" : "Card, Apple Pay, bank transfer, Revolut, Venmo, Cash App"}
               onClick={() => setScreen("card")}
               disabled={blinkDepositing}
               icons={[{ src: "/images/icons/card-chip.svg", bg: "#1C1C22" }]}
@@ -947,7 +960,8 @@ function CardDeposit({
       setIsMobile(ua || touchMac);
     } catch { /* keep desktop */ }
   }, []);
-  const providers = CARD_PROVIDERS.filter((p) => p.id !== "paj" || PAJ_CASH_ENABLED);
+  const isNigeria = useIsNigeria();
+  const providers = CARD_PROVIDERS.filter((p) => p.id !== "paj" || (PAJ_CASH_ENABLED && isNigeria));
   const selected = providers.find((p) => p.id === provider && !(isMobile && p.id === "peer")) ?? null;
 
   const continueWith = async (chosen: CardProvider) => {
@@ -973,7 +987,7 @@ function CardDeposit({
   };
 
   if (provider === "card") {
-    return <MeldFlow side="buy" solanaAddress={solanaAddress} getAccessToken={getAccessToken} onBack={() => setProvider(null)} />;
+    return <MeldFlow side="buy" solanaAddress={solanaAddress} getAccessToken={getAccessToken} onBack={() => setProvider(null)} onPaj={PAJ_CASH_ENABLED && isNigeria ? onPaj : undefined} />;
   }
 
   return (
@@ -2048,6 +2062,7 @@ function BankWithdraw({
   const [bankOpen, setBankOpen] = useState(false);
   // Bank cash-out only exists in some countries; hide the row elsewhere (shown until we know)
   const [bankSupported, setBankSupported] = useState(true);
+  const isNigeria = useIsNigeria();
   useEffect(() => {
     fetch("/api/meld/offramp-session", { cache: "no-store" })
       .then((r) => r.json())
@@ -2076,11 +2091,11 @@ function BankWithdraw({
   };
 
   if (devnetMode) {
-    return <p className="mt-4 text-sm text-[#C8C6D0]">Bank cash-out is available on mainnet. Switch networks to cash out to a bank, PAJ Cash, or a bank app.</p>;
+    return <p className="mt-4 text-sm text-[#C8C6D0]">Bank cash-out is available on mainnet. Switch networks to cash out to a bank or a bank app.</p>;
   }
 
   if (bankOpen && solanaAddress) {
-    return <MeldFlow side="sell" solanaAddress={solanaAddress} balanceNum={balanceNum} getAccessToken={getAccessToken} onBack={() => setBankOpen(false)} />;
+    return <MeldFlow side="sell" solanaAddress={solanaAddress} balanceNum={balanceNum} getAccessToken={getAccessToken} onBack={() => setBankOpen(false)} onPaj={PAJ_CASH_ENABLED && isNigeria ? onPaj : undefined} />;
   }
 
   if (platform) {
@@ -2159,7 +2174,7 @@ function BankWithdraw({
         </span>
       </button>
       )}
-      {PAJ_CASH_ENABLED && (
+      {PAJ_CASH_ENABLED && isNigeria && (
         <button type="button" onClick={onPaj} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20">
           <img src="/images/icons/paj-cash-logo.svg" alt="" className="h-9 w-9 rounded-xl object-contain" />
           <span className="min-w-0 flex-1">
