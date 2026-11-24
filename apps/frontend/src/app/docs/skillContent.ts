@@ -318,7 +318,9 @@ API sends money.
 
 ## 1. One-time setup (the user does this, an agent cannot)
 
-1. Create an organisation at https://pay.loofta.com/partner/portal and sign in with email.
+1. Create an organisation at https://pay.loofta.com/partner/portal and sign in with email. New organisations are
+   reviewed by Loofta first. Until it is approved the portal says the account is waiting, and the company wallet and
+   API keys stay locked. Do not plan a launch around it being instant.
 2. Create the company wallet under Wallet, then add USDC to it.
 3. Under Developers, create an API key (starts with \`lft_live_\`) and switch on "Pay in bulk from your
    platform". Only an owner can switch it on. It is off by default.
@@ -350,7 +352,8 @@ Raw HTTP: \`POST https://api.loofta.com/partner-api/batches\` with \`Authorizati
 
 Rules to respect:
 - Recipients are email addresses only. Twitter, wallets and other handles are rejected.
-- 1 to 100 rows per batch. Each amount is $1 to $10,000. Split bigger payouts across batches.
+- 1 to 1,000 rows per batch. Each amount is $1 to $10,000. A batch of several hundred people takes a minute or two to
+  prepare after the admin approves it, so do not poll for it to be instant.
 - Use a stable, unique \`idempotencyKey\` per payout cycle (for example the cycle or invoice id), never a random value
   per request, or a retry will draft a second batch.
 - The batch always starts as \`pending_approval\`. Do not build a flow that waits for it to pay on its own.
@@ -424,6 +427,45 @@ import { Payouts } from "@loofta/portal";
 \`\`\`
 
 The token lasts 15 minutes and is scoped to that one user. Mint it per page load, never store it.
+
+Prefer your own screens, from your server? Ask for one user directly, no token needed:
+
+\`\`\`ts
+const alice = loofta.user("alice@example.com"); // or { platform: "twitter", handle: "alice" } or { externalUserId: "user_42" }
+const balance = await alice.balance();
+// { availableUsd, withdrawnUsd, totalReceivedUsd, payouts }
+const page = await alice.history({ page: 1, limit: 20 }); // limit 1 to 100, newest first
+// { page, limit, total, hasMore, items: [{ paymentId, amount, message, externalRef, receivedAt, state, withdrawnAt }] }
+\`\`\`
+
+Raw HTTP: \`GET https://api.loofta.com/partner-api/users/balance?email=...\` and \`.../users/history?email=...&page=1&limit=20\`
+with the same API key. It only reads payouts your own company made to that person.
+
+Or read it from the browser with the widget token:
+
+\`\`\`ts
+const me = await fetch("https://pay.loofta.com/api/portal/me", { headers: { Authorization: \`Bearer \${token}\` } }).then((r) => r.json());
+// me.available_usd  what they can withdraw now
+// me.withdrawn_usd  what they already withdrew
+// me.history        [{ amount, message, received_at, state: "available" | "withdrawn" }], newest first
+// me.withdraw_url   send them here to withdraw, on a page with your name and logo
+\`\`\`
+
+Only payouts that are really funded appear. A payout you took back disappears from the list.
+
+## 6. What you can build
+
+- A page where each user sees what they were paid and their balance: the widget above, or \`/portal/me\` with your own design.
+- A page in your own admin that pays people by email: a form that runs step 2 on your server and redirects to
+  \`batch.approveUrl\`. The approval and the signature happen in the Loofta partner portal, by your owner or admin and
+  the company wallet's signers. Your admin cannot move money by itself.
+- Not available through the API: your company wallet balance and the approval itself. Those live in the partner portal.
+
+## 7. What people pay
+
+When someone withdraws, Loofta currently takes $0.05 plus 0.3% of the amount. You can add your own fee (a fixed amount, a
+percent or both, never more than 25% of the payout) under Settings in the partner portal, and it is paid to your
+wallet on every withdrawal. The withdraw page shows the person what they will receive before they confirm.
 
 ## Errors
 

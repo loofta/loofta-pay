@@ -1,6 +1,6 @@
 {
   "name": "@loofta/portal",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Embeddable payout portal for Loofta partners. Your users see what they were paid and withdraw it, inside your own app, with no Loofta account.",
   "license": "MIT",
   "main": "./dist/index.js",

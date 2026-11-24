@@ -30,6 +30,21 @@ export const COMPRESS_PER_TX = 15;
 export type Cluster = 'mainnet' | 'devnet';
 
 /**
+ * Why a compress transaction did not go through, and whether it is SAFE to try those payouts again in a smaller group.
+ * `definite`: it can never land (it was never sent, was refused before it was broadcast, failed on chain, or its blockhash
+ * expired), so the payouts can be re-sent. Not definite: it might still land, so nothing may be re-sent until the chain says.
+ */
+export class CompressError extends Error {
+  constructor(message: string, readonly definite: boolean, readonly signature?: string) {
+    super(message);
+    this.name = 'CompressError';
+  }
+}
+
+/** Errors the network gives back for a transaction it refused to accept at all (too big, too much compute): it was not broadcast. */
+const REFUSED_BEFORE_BROADCAST = /simulation failed|too large|encoding overruns|exceeded|exceeds|invalid transaction/i;
+
+/**
  * Light's lookup tables for the state-tree accounts. There are two generations. The SDK exports one per network, but it
  * does not cover every tree we get back: with only that one a 15-payout transaction does not fit (found on devnet,
  * 2026-11-23). The other generation is listed in Light's docs. A transaction only carries the tables it actually uses,
@@ -174,16 +189,30 @@ export class LightCompressionService {
     record: (signature: string, lastValidBlockHeight: number) => Promise<void>,
   ): Promise<string> {
     const rpc = this.rpc(cluster);
-    const ixs = await this.buildCompressInstructions(cluster, mint, staging, stagingAta, targets);
-    const tables = await this.lookupTables(cluster);
-    const { blockhash, lastValidBlockHeight } = await rpc.getLatestBlockhash('confirmed');
-    const message = new TransactionMessage({ payerKey: staging.publicKey, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message(tables);
-    const tx = new VersionedTransaction(message);
-    tx.sign([staging]);
-    const signature = bs58.encode(tx.signatures[0]);
-    await record(signature, lastValidBlockHeight);
-    await rpc.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-    await this.waitForSignature(cluster, signature, lastValidBlockHeight);
+    // Everything up to and including saving the signature happens before anything is broadcast, so a failure there is definite.
+    let signature: string;
+    let tx: VersionedTransaction;
+    let lastValid: number;
+    try {
+      const ixs = await this.buildCompressInstructions(cluster, mint, staging, stagingAta, targets);
+      const tables = await this.lookupTables(cluster);
+      const { blockhash, lastValidBlockHeight } = await rpc.getLatestBlockhash('confirmed');
+      const message = new TransactionMessage({ payerKey: staging.publicKey, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message(tables);
+      tx = new VersionedTransaction(message);
+      tx.sign([staging]);
+      signature = bs58.encode(tx.signatures[0]);
+      lastValid = lastValidBlockHeight;
+      await record(signature, lastValidBlockHeight);
+    } catch (e) {
+      throw new CompressError((e as Error).message, true);
+    }
+    try {
+      await rpc.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
+    } catch (e) {
+      const m = (e as Error).message ?? '';
+      throw new CompressError(m, REFUSED_BEFORE_BROADCAST.test(m), signature);
+    }
+    await this.waitForSignature(cluster, signature, lastValid);
     return signature;
   }
 
@@ -241,11 +270,11 @@ export class LightCompressionService {
     for (let i = 0; i < 100; i++) {
       const outcome = await this.signatureOutcome(cluster, signature, lastValidBlockHeight);
       if (outcome === 'landed') return;
-      if (outcome === 'failed') throw new Error('The compress transaction failed on chain.');
-      if (outcome === 'expired') throw new Error('The compress transaction expired before it landed.');
+      if (outcome === 'failed') throw new CompressError('The compress transaction failed on chain.', true, signature);
+      if (outcome === 'expired') throw new CompressError('The compress transaction expired before it landed.', true, signature);
       await new Promise((r) => setTimeout(r, 500));
     }
     this.logger.warn(`Compress ${signature} not confirmed after waiting; it stays recorded and will be checked again`);
-    throw new Error('The compress transaction has not confirmed yet.');
+    throw new CompressError('The compress transaction has not confirmed yet.', false, signature);
   }
 }

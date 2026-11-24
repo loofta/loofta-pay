@@ -42,4 +42,4 @@ No React:
 
 ## Or skip the UI: hosted page
 
-Send people to `https://pay.loofta.xyz/withdraw?orgId=<your org id>`. They sign in with the email address you paid and withdraw on a page with your name and logo. The widget's Withdraw button opens the same page.
+Send people to `https://pay.loofta.com/withdraw?orgId=<your org id>`. They sign in with the email address you paid and withdraw on a page with your name and logo. The widget's Withdraw button opens the same page.

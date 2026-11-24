@@ -1,7 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsISO8601, IsNotEmpty, IsOptional, IsString, Length, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
-import { MAX_BATCH_ROWS, PayoutBatchRowDto } from '@/modules/payouts/dto/create-payout-batch.dto';
+import { PayoutBatchRowDto } from '@/modules/payouts/dto/create-payout-batch.dto';
+
+/** Payouts in one partner batch. Funding compresses the money into the burners, so size is no longer limited by a transaction. */
+export const MAX_PARTNER_BATCH_ROWS = 1000;
 
 export class CreatePartnerBatchDto {
   @ApiProperty({ description: 'Unique per batch. Resending the same key returns the existing batch instead of creating a second one.' })
@@ -20,10 +23,10 @@ export class CreatePartnerBatchDto {
   @IsISO8601({ strict: true })
   scheduled_for?: string;
 
-  @ApiProperty({ type: [PayoutBatchRowDto], description: `1 to ${MAX_BATCH_ROWS} payouts` })
+  @ApiProperty({ type: [PayoutBatchRowDto], description: `1 to ${MAX_PARTNER_BATCH_ROWS} payouts` })
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(MAX_BATCH_ROWS)
+  @ArrayMaxSize(MAX_PARTNER_BATCH_ROWS)
   @ValidateNested({ each: true })
   @Type(() => PayoutBatchRowDto)
   rows: PayoutBatchRowDto[];
@@ -49,7 +52,7 @@ export class CancelPayoutsDto {
   @ApiProperty({ type: [String], required: false, description: 'Payments to take back. Leave out to take back every funded payout in the batch.' })
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(MAX_BATCH_ROWS)
+  @ArrayMaxSize(MAX_PARTNER_BATCH_ROWS)
   @ArrayUnique()
   @IsString({ each: true })
   @MaxLength(64, { each: true })
@@ -60,7 +63,7 @@ export class ConfirmBatchDto {
   @ApiProperty({ type: [String], description: 'Signatures of the funding transactions that were broadcast' })
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(MAX_BATCH_ROWS)
+  @ArrayMaxSize(MAX_PARTNER_BATCH_ROWS)
   @ArrayUnique()
   @IsString({ each: true })
   @MaxLength(128, { each: true })

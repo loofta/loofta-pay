@@ -46,6 +46,7 @@ import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { LightCompressionService } from '@/common/light-compression.service';
+import { selectInChunks } from '@/common/in-chunks';
 import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
 import { AsyncLocalStorage } from 'async_hooks';
 import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
@@ -100,12 +101,12 @@ export function runWithVelocityAllowance<T>(batchSize: number, fn: () => Promise
 }
 
 /**
- * Partner batches are up to 100 payouts created by an org member after the partner's own approval
+ * Partner batches are up to 1,000 payouts created by an org member after the partner's own approval
  * rules, so they get their own, larger allowance. Kept separate from the 10-slot cap above so a
  * bug elsewhere can never widen the bot/consumer limit. Only the partner payouts service calls it.
  */
 const partnerBatchAllowance = new AsyncLocalStorage<number>();
-export const PARTNER_BATCH_ALLOWANCE_CAP = 100;
+export const PARTNER_BATCH_ALLOWANCE_CAP = 1000;
 export function runWithPartnerBatchAllowance<T>(batchSize: number, fn: () => Promise<T>): Promise<T> {
   return partnerBatchAllowance.run(Math.min(PARTNER_BATCH_ALLOWANCE_CAP, Math.max(0, Math.floor(batchSize))), fn);
 }
@@ -1669,8 +1670,14 @@ export class ClaimsService {
     partnerId: string,
   ): Promise<Array<{ claimId: string; burner: string; baseUnits: number; status: string; cluster: 'mainnet' | 'devnet'; mint: string }>> {
     const out: Array<{ claimId: string; burner: string; baseUnits: number; status: string; cluster: 'mainnet' | 'devnet'; mint: string }> = [];
+    // One read per 100 payouts instead of one per payout: a batch can hold 1,000.
+    const { data: found, error } = await selectInChunks<Record<string, unknown>>(claimIds, (group) => this.supabaseService.payments.select('*').in('id', group));
+    if (error) throw new BadRequestException('Could not read the payouts. Please try again.');
+    const byId = new Map((found ?? []).map((r) => [String(r.id), this.normalizeFromPayments(r)]));
     for (const claimId of claimIds) {
-      const claim = await this.findOneRaw(claimId);
+      const row = byId.get(claimId);
+      if (!row || String(row.status || '').toUpperCase() === 'DELETED') throw new NotFoundException(`Claim with ID ${claimId} not found`);
+      const claim = row as unknown as Claim & { recipient_address?: string };
       if ((claim as { partner_id?: string | null }).partner_id !== partnerId) {
         throw new ForbiddenException('Payment does not belong to this partner.');
       }

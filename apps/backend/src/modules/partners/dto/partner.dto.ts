@@ -159,3 +159,15 @@ export class GroupMembersDto {
   @IsOptional() @IsArray() @ArrayMaxSize(1000) @IsUUID('4', { each: true })
   recipient_ids?: string[];
 }
+
+const USER_PLATFORMS = ['twitter', 'discord', 'github', 'telegram'] as const;
+
+/** Which of a partner's users to look up (an email, a platform and handle, or the partner's own id for them), and which page. */
+export class UserQueryDto {
+  @ApiPropertyOptional() @IsOptional() @IsEmail() @MaxLength(254) email?: string;
+  @ApiPropertyOptional({ enum: USER_PLATFORMS }) @IsOptional() @IsIn(USER_PLATFORMS as unknown as string[]) platform?: (typeof USER_PLATFORMS)[number];
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) handle?: string;
+  @ApiPropertyOptional({ description: 'Your own id for the user, if you imported them with one.' }) @IsOptional() @IsString() @MaxLength(200) external_user_id?: string;
+  @ApiPropertyOptional({ description: 'History only. Starts at 1.' }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100000) page?: number;
+  @ApiPropertyOptional({ description: 'History only. 1 to 100, default 20.' }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+}

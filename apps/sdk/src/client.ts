@@ -1,8 +1,8 @@
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
 import bs58 from "bs58";
-import { PartnerApi, PayoutsApi, PortalApi, WebhooksApi, type Requester } from "./payouts";
-import type { LooftaPayClientOptions, PayHumanParams, PayHumanResult, CreatePaymentLinkParams, CreatePaymentLinkResult, PaymentLinkStatus } from "./types";
+import { PartnerApi, PartnerUser, PayoutsApi, PortalApi, WebhooksApi, type Requester } from "./payouts";
+import type { PartnerUserRef, LooftaPayClientOptions, PayHumanParams, PayHumanResult, CreatePaymentLinkParams, CreatePaymentLinkResult, PaymentLinkStatus } from "./types";
 
 const DEFAULT_BASE_URL = "https://api.loofta.com";
 const USDC_DECIMALS = 6;
@@ -123,6 +123,14 @@ export class LooftaPayClient implements Requester {
 
   setWithdrawOptions(params: Parameters<PartnerApi["setWithdrawOptions"]>[0]) {
     return this.partner.setWithdrawOptions(params);
+  }
+
+  /**
+   * One of your users: `loofta.user("alice@example.com").balance()` and `.history({ page: 1 })`. Use an email, a
+   * platform and handle, or the externalUserId you imported them with. Call it from your server with your API key.
+   */
+  user(ref: PartnerUserRef) {
+    return new PartnerUser(this, ref);
   }
 
   /** A short-lived token for the payout portal your users see. Create it on your server, never in the browser. */

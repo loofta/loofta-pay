@@ -1,6 +1,6 @@
 import { Keypair, PublicKey } from '@solana/web3.js';
 import { ConfigService } from '@nestjs/config';
-import { LightCompressionService, chunkTargets, compressedPayoutsEnabledFor, instructionGroups, COMPRESS_PER_TX } from './light-compression.service';
+import { CompressError, LightCompressionService, chunkTargets, compressedPayoutsEnabledFor, instructionGroups, COMPRESS_PER_TX } from './light-compression.service';
 
 const cfg = (v: Record<string, string>) => ({ get: (k: string) => v[k] }) as unknown as ConfigService;
 
@@ -136,5 +136,67 @@ describe('sendInstructions', () => {
   it('gives up after the attempts it was allowed', async () => {
     const { svc } = make(['expired', 'expired']);
     await expect(svc.sendInstructions('devnet', [], payer, [], { maxAttempts: 2 })).rejects.toThrow('did not land');
+  });
+});
+
+describe('why a compress transaction failed', () => {
+  const staging = Keypair.generate();
+  const mint = Keypair.generate().publicKey;
+  const ata = Keypair.generate().publicKey;
+  const targets = [{ burner: Keypair.generate().publicKey.toBase58(), baseUnits: 1_000_000 }];
+
+  function make(opts: { sendError?: string; outcome?: 'landed' | 'failed' | 'expired' | 'unknown'; recordError?: string }) {
+    const rpc = {
+      getAddressLookupTable: jest.fn(async () => ({ value: null })),
+      getLatestBlockhash: jest.fn(async () => ({ blockhash: PublicKey.default.toBase58(), lastValidBlockHeight: 100 })),
+      sendRawTransaction: jest.fn(async () => {
+        if (opts.sendError) throw new Error(opts.sendError);
+        return 'sig';
+      }),
+      getSignatureStatuses: jest.fn(),
+      getBlockHeight: jest.fn(),
+    };
+    const svc = new LightCompressionService(cfg({ HELIUS_API_KEY: 'k' }));
+    jest.spyOn(svc, 'rpc').mockReturnValue(rpc as never);
+    jest.spyOn(svc, 'buildCompressInstructions').mockResolvedValue([]);
+    jest.spyOn(svc, 'signatureOutcome').mockResolvedValue(opts.outcome ?? 'unknown');
+    // the wait loop sleeps 500 ms between looks: make it instant
+    jest.spyOn(global, 'setTimeout').mockImplementation(((fn: () => void) => { fn(); return 0 as never; }) as never);
+    const run = () => svc.compressChunk('devnet', mint, staging, ata, targets, async () => { if (opts.recordError) throw new Error(opts.recordError); });
+    return { run, rpc };
+  }
+  afterEach(() => jest.restoreAllMocks());
+
+  const failure = async (p: Promise<unknown>) => p.then(() => null, (e) => e as CompressError);
+
+  it('a refusal before broadcast (too big) is definite, so smaller groups are safe', async () => {
+    const e = await failure(make({ sendError: 'Simulation failed: Transaction too large' }).run());
+    expect(e).toBeInstanceOf(CompressError);
+    expect(e!.definite).toBe(true);
+    expect(e!.signature).toBeDefined();
+  });
+
+  it('a network error while sending is NOT definite: it may have reached the network', async () => {
+    const e = await failure(make({ sendError: 'fetch failed' }).run());
+    expect(e!.definite).toBe(false);
+  });
+
+  it('failing on chain and an expired blockhash are definite', async () => {
+    expect((await failure(make({ outcome: 'failed' }).run()))!.definite).toBe(true);
+    expect((await failure(make({ outcome: 'expired' }).run()))!.definite).toBe(true);
+  });
+
+  it('not confirmed yet is not definite, and carries the signature to check later', async () => {
+    const e = await failure(make({ outcome: 'unknown' }).run());
+    expect(e!.definite).toBe(false);
+    expect(e!.signature).toBeDefined();
+  });
+
+  it('failing to save the signature means nothing was sent, which is definite', async () => {
+    const t = make({ recordError: 'db down' });
+    const e = await failure(t.run());
+    expect(e!.definite).toBe(true);
+    expect(e!.message).toBe('db down');
+    expect(t.rpc.sendRawTransaction).not.toHaveBeenCalled();
   });
 });

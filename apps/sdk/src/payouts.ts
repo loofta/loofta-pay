@@ -4,6 +4,9 @@ import type {
   CreatePartnerBatchParams,
   CreatePayoutBatchParams,
   PartnerBatch,
+  PartnerUserRef,
+  UserBalance,
+  UserHistory,
   SetWithdrawOptionsParams,
   WithdrawOptions,
   PayoutWebhookEvent,
@@ -284,4 +287,45 @@ export function verifyWebhook<T = PayoutWebhookEvent>(rawBody: string | Buffer, 
   const b = Buffer.from(given);
   if (a.length !== b.length || !timingSafeEqual(a, b)) throw new Error("Invalid Loofta webhook signature");
   return JSON.parse(body);
+}
+
+/**
+ * One of your users, seen from your server: what they can withdraw and what you paid them. Get it from
+ * `loofta.user("alice@example.com")`. It only ever reads payouts YOUR company made to that person.
+ */
+export class PartnerUser {
+  constructor(private readonly http: Requester, private readonly ref: PartnerUserRef) {}
+
+  private query(extra: Record<string, string | number | undefined> = {}): string {
+    const r = this.ref;
+    const q = new URLSearchParams();
+    if (typeof r === "string") q.set("email", r);
+    else if ("email" in r) q.set("email", r.email);
+    else if ("externalUserId" in r) q.set("external_user_id", r.externalUserId);
+    else (q.set("platform", r.platform), q.set("handle", r.handle));
+    for (const [k, v] of Object.entries(extra)) if (v !== undefined) q.set(k, String(v));
+    return q.toString();
+  }
+
+  /** What they can withdraw now, what they already withdrew, and how many payouts that is. */
+  async balance(): Promise<UserBalance> {
+    const d = await this.http.request<{ identity: string; available_usd: number; withdrawn_usd: number; total_received_usd: number; payouts: number }>("GET", `/partner-api/users/balance?${this.query()}`);
+    return { identity: d.identity, availableUsd: d.available_usd, withdrawnUsd: d.withdrawn_usd, totalReceivedUsd: d.total_received_usd, payouts: d.payouts };
+  }
+
+  /** One page of their payouts, newest first. `page` starts at 1, `limit` is 1 to 100 (default 20). */
+  async history(params: { page?: number; limit?: number } = {}): Promise<UserHistory> {
+    const d = await this.http.request<{
+      identity: string; page: number; limit: number; total: number; has_more: boolean;
+      items: Array<{ payment_id: string; amount: number; message: string | null; external_ref: string | null; received_at: string; state: "available" | "withdrawn"; withdrawn_at: string | null }>;
+    }>("GET", `/partner-api/users/history?${this.query({ page: params.page, limit: params.limit })}`);
+    return {
+      identity: d.identity,
+      page: d.page,
+      limit: d.limit,
+      total: d.total,
+      hasMore: d.has_more,
+      items: d.items.map((i) => ({ paymentId: i.payment_id, amount: i.amount, message: i.message, externalRef: i.external_ref, receivedAt: i.received_at, state: i.state, withdrawnAt: i.withdrawn_at })),
+    };
+  }
 }

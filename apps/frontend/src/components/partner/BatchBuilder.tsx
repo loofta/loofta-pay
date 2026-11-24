@@ -5,7 +5,7 @@ import { Btn, Field, Notice, Pill, Row, Section, Segmented, Table, inputCls } fr
 import { usd, usePartnerApi } from "./usePartnerApi";
 import { NiceSelect } from "@/components/ui/NiceSelect";
 
-export const MAX_ROWS = 100;
+export const MAX_ROWS = 1000;
 const MIN_AMOUNT = 1; // the server rejects anything under $1
 const MAX_AMOUNT = 10000;
 const MAX_FILE_BYTES = 1_000_000;

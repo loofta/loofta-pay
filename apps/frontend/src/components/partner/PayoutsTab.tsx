@@ -212,7 +212,13 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
     guard("fund", async () => {
       if (!ts || !ts.created) throw new Error("Create your company wallet first.");
       if (!canPropose) throw new Error("Your Loofta wallet is not a signer of the company wallet.");
-      await call(`${base}/batches/${b.id}/prepare`, post());
+      // A big batch is prepared in several rounds. Ask again until every payout exists.
+      let prep = await call<{ preparing?: boolean; remaining?: number }>(`${base}/batches/${b.id}/prepare`, post());
+      for (let round = 0; prep.preparing && round < 120; round++) {
+        setOk(`Preparing the payouts, ${prep.remaining ?? 0} to go...`);
+        prep = await call<{ preparing?: boolean; remaining?: number }>(`${base}/batches/${b.id}/prepare`, post());
+      }
+      if (prep.preparing) throw new Error("Preparing is taking longer than expected. Open the batch again to continue.");
       let made = 0;
       let sent = 0;
       for (let i = 0; i < 60; i++) {

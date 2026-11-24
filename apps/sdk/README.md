@@ -83,7 +83,7 @@ redirect(batch.approveUrl); // your admin approves and pays it
 const status = await loofta.getBatch(batch.batchId); // pending_approval ... executed
 ```
 
-Rows are email addresses, 1 to 100 per batch, $1 to $10,000 each.
+Rows are email addresses, 1 to 1,000 per batch, $1 to $10,000 each. A batch of several hundred people takes a minute or two to prepare after your team approves it.
 
 **Schedule it.** Add `scheduledFor: new Date("2026-12-01T09:00:00Z")` (5 minutes to 90 days ahead). Your team still
 approves the batch. At that time Loofta creates the payouts and asks your company wallet's signers to fund them. A
@@ -100,6 +100,22 @@ const { secret } = await loofta.setWebhook("https://yourapp.com/loofta-webhook")
 // batch.schedule_failed, payout.funded, payout.claimed, payout.withdrawn (with your fee)
 const event = verifyWebhook<BatchWebhookEvent | PayoutWebhookEvent>(rawBody, signatureHeader, secret);
 ```
+
+**Show a user what they received.** From your server, for the signed-in user:
+
+```ts
+const alice = loofta.user("alice@example.com"); // or { platform: "twitter", handle: "alice" } or { externalUserId: "user_42" }
+
+const { availableUsd, withdrawnUsd, totalReceivedUsd } = await alice.balance();
+// availableUsd: what they can withdraw now
+
+const page = await alice.history({ page: 1, limit: 20 }); // limit 1 to 100, newest first
+// page.total, page.hasMore, and page.items: [{ paymentId, amount, message, externalRef, receivedAt, state, withdrawnAt }]
+// state is "available" or "withdrawn". externalRef is the reference you set on the row.
+```
+
+It only reads payouts your own company made to that person. Payouts you took back are not listed. For a ready-made
+screen, use `@loofta/portal` instead (it shows the same balance and history, plus a Withdraw button).
 
 ## Bulk payouts from your own wallet (bulk, portal, webhooks)
 

@@ -39,7 +39,7 @@ type PortalData = {
   history: HistoryItem[];
 };
 
-const DEFAULT_API = "https://pay.loofta.xyz/api/portal";
+const DEFAULT_API = "https://pay.loofta.com/api/portal";
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /**

@@ -8,7 +8,7 @@ export type {
   PaymentLinkStatus,
   LooftaPayClientOptions,
 } from "./types";
-export { verifyWebhook } from "./payouts";
+export { verifyWebhook, PartnerUser } from "./payouts";
 export type {
   PayoutRecipientType,
   PayoutRow,
@@ -24,6 +24,10 @@ export type {
   PartnerPayoutRow,
   CreatePartnerBatchParams,
   PortalToken,
+  PartnerUserRef,
+  UserBalance,
+  UserHistory,
+  UserPayout,
   WebhookConfig,
   PayoutWebhookEvent,
 } from "./types";

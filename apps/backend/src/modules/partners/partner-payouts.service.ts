@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { SupabaseService } from '@/database/supabase.service';
+import { selectInChunks } from '@/common/in-chunks';
 import { ClaimsService, runWithPartnerBatchAllowance } from '@/modules/claims/claims.service';
 import { RedisService } from '@/redis/redis.service';
 import { isValidSolanaAddress } from '@/common/solana-address';
@@ -43,6 +44,10 @@ type ItemRow = {
   payment_id: string | null;
   funding_tx: string | null;
 };
+
+/** Preparing a batch creates a payout for every row. One request works for at most this long, then asks to be called again. */
+const PREPARE_BUDGET_MS = 40_000;
+const PREPARE_CONCURRENCY = 5;
 
 const BATCH_COLUMNS =
   'id, partner_id, status, idempotency_key, label, total_amount, item_count, failed_count, rows_hash, created_by_user_id, approved_by_user_id, approved_at, sender_wallet, scheduled_for, scheduled_run_at, scheduled_error, created_at';
@@ -304,7 +309,7 @@ export class PartnerPayoutsService {
     await this.partners.adoptFundingWalletAsFeeWallet(partner, member.role, userId, wallet);
 
     // One prepare at a time per batch: two concurrent runs would each create a burner per row.
-    let firstPrepare = false;
+    let announce = false;
     const result = await this.redis.withLock(`partner-batch-prepare:${batchId}`, async () => {
       let batch = await this.getOwnedBatch(partner.id, batchId);
       if (!['approved', 'awaiting_funding'].includes(batch.status)) throw new ConflictException(`This batch is ${batch.status.replace('_', ' ')}.`);
@@ -329,14 +334,28 @@ export class PartnerPayoutsService {
           .eq('status', 'approved')
           .select('id');
         if (!won?.length) throw new ConflictException('This batch was already prepared.');
-        firstPrepare = true;
       }
 
+      // Creating a payout (and its burner) for every row takes time, and a batch can hold 1,000. Work in a few at a time, for
+      // a bounded time, and tell the caller to come back for the rest. Rows already created are never created again.
       const queued = items.filter((i) => i.status === 'queued');
+      let remaining = 0;
       if (queued.length) {
+        const stopAt = Date.now() + PREPARE_BUDGET_MS;
         await runWithPartnerBatchAllowance(queued.length, async () => {
-          for (const item of queued) await this.createClaimForItem(partner.id, userId, batchId, item);
+          let next = 0;
+          const worker = async () => {
+            while (Date.now() < stopAt) {
+              const item = queued[next++];
+              if (!item) return;
+              await this.createClaimForItem(partner.id, userId, batchId, item);
+            }
+          };
+          await Promise.all(Array.from({ length: PREPARE_CONCURRENCY }, worker));
         });
+        remaining = (await this.getItems(batchId)).filter((i) => i.status === 'queued').length;
+        if (remaining > 0) return { batch_id: batchId, preparing: true as const, remaining, status: 'awaiting_funding' };
+        announce = true; // the call that finished creating the payouts tells the owners the batch is ready
       }
 
       const created = (await this.getItems(batchId)).filter((i) => i.status === 'created' && i.payment_id);
@@ -373,8 +392,9 @@ export class PartnerPayoutsService {
     }, 120_000);
 
     if (!result) throw new ConflictException('This batch is being prepared by someone else. Try again in a moment.');
+    if ('preparing' in result && result.preparing) return result; // not all payouts are created yet: nothing to announce or audit
     await this.partners.audit(partner.id, userId, 'batch.prepared', { type: 'batch', id: batchId }, { wallet, ...(opts.scheduled ? { scheduled: true } : {}) });
-    if (firstPrepare) await this.announceReady(partner, batchId, !!opts.scheduled);
+    if (announce) await this.announceReady(partner, batchId, !!opts.scheduled);
     return result;
   }
 
@@ -436,8 +456,12 @@ export class PartnerPayoutsService {
     try {
       if (!actor || !partnerRow) throw new Error('No approver on record.');
       if ((partnerRow as { status: string }).status !== 'active') throw new Error('The partner account is not active.');
-      await this.prepare((partnerRow as { org_id: string }).org_id, actor, b.id, {}, { scheduled: true });
-      return 'ran';
+      // A big batch is prepared in several rounds. Keep going until every payout exists.
+      for (let round = 0; round < 60; round++) {
+        const r = await this.prepare((partnerRow as { org_id: string }).org_id, actor, b.id, {}, { scheduled: true });
+        if (!('preparing' in r && r.preparing)) return 'ran';
+      }
+      throw new Error('Preparing the payouts took too long. Open the batch to finish it.');
     } catch (e) {
       const message = (e as Error).message.slice(0, 300);
       this.logger.warn(`Scheduled batch ${b.id} could not be prepared: ${message}`);
@@ -681,7 +705,7 @@ export class PartnerPayoutsService {
     const ids = rows.map((r) => r.id);
     const batchOf = new Map<string, string>();
     if (ids.length) {
-      const { data: items } = await this.supabase.payoutBatchItems.select('payment_id, batch_id').in('payment_id', ids);
+      const { data: items } = await selectInChunks<{ payment_id: string | null; batch_id: string }>(ids, (g) => this.supabase.payoutBatchItems.select('payment_id, batch_id').in('payment_id', g));
       const batchIds = [...new Set((items ?? []).map((i) => i.batch_id as string))];
       const labels = new Map<string, string>();
       if (batchIds.length) {
@@ -752,7 +776,7 @@ export class PartnerPayoutsService {
     const funded = items.filter((i) => i.payment_id && i.status === 'funded').map((i) => i.payment_id as string);
     // Only payouts that are still funded: a payout already cancelled or withdrawn is skipped, not reported as a failure.
     const { data: rows } = funded.length
-      ? await this.supabase.payments.select('id, status, partner_withdrawn_at').in('id', funded).eq('partner_id', partner.id)
+      ? await selectInChunks<{ id: string; status: string; partner_withdrawn_at: string | null }>(funded, (g) => this.supabase.payments.select('id, status, partner_withdrawn_at').in('id', g).eq('partner_id', partner.id))
       : { data: [] as Array<{ id: string; status: string; partner_withdrawn_at: string | null }> };
     const open = (rows ?? [])
       .filter((r) => !r.partner_withdrawn_at && ['PRIVATE_TRANSFER_PENDING', 'SUCCESS'].includes(String(r.status).toUpperCase()))
@@ -804,11 +828,13 @@ export class PartnerPayoutsService {
   private async withTakenBack<T extends BatchRow>(batches: T[]): Promise<T[]> {
     const live = batches.filter((b) => ['executed', 'awaiting_funding'].includes(b.status));
     if (!live.length) return batches;
-    const { data: items } = await this.supabase.payoutBatchItems
-      .select('batch_id, amount, payment_id, status')
-      .in('batch_id', live.map((b) => b.id));
-    const ids = (items ?? []).map((i) => i.payment_id).filter((id): id is string => !!id);
-    const { data: pays } = ids.length ? await this.supabase.payments.select('id, status').in('id', ids) : { data: [] as Array<{ id: string; status: string }> };
+    // One read per batch: a single read for many batches would be cut off at 1,000 rows and a batch can hold 1,000.
+    const perBatch = await Promise.all(
+      live.map((b) => this.supabase.payoutBatchItems.select('batch_id, amount, payment_id, status').eq('batch_id', b.id).limit(1000)),
+    );
+    const items = perBatch.flatMap((r) => r.data ?? []);
+    const ids = items.map((i) => i.payment_id).filter((id): id is string => !!id);
+    const { data: pays } = ids.length ? await selectInChunks<{ id: string; status: string }>(ids, (g) => this.supabase.payments.select('id, status').in('id', g)) : { data: [] as Array<{ id: string; status: string }> };
     const cancelled = new Set((pays ?? []).filter((p) => String(p.status).toUpperCase() === 'CANCELLED').map((p) => p.id as string));
     return batches.map((b) => {
       const mine = (items ?? []).filter((i) => i.batch_id === b.id && i.status !== 'failed');
@@ -836,6 +862,106 @@ export class PartnerPayoutsService {
     await this.supabase.payoutBatches.update({ status: 'deleted' }).eq('id', batchId).eq('partner_id', partner.id);
     await this.partners.audit(partner.id, userId, 'batch.deleted', { type: 'batch', id: batchId });
     return { status: 'deleted' as const };
+  }
+
+  // ------------------------------------------------ one user's payouts, for the partner's own server
+
+  /** Who the partner is asking about: an email, a platform and handle, or their own id for the person. */
+  private async userIdentity(partnerId: string, q: { email?: string; platform?: string; handle?: string; external_user_id?: string }): Promise<{ email?: string; platform?: string; handle?: string }> {
+    if (q.external_user_id) {
+      const { data: r } = await this.supabase.partnerRecipients
+        .select('email, handle_platform, handle')
+        .eq('partner_id', partnerId)
+        .eq('external_user_id', q.external_user_id)
+        .maybeSingle();
+      if (!r) throw new NotFoundException('Unknown external_user_id. Import this user first, or pass an email or handle.');
+      if (r.email) return { email: String(r.email).toLowerCase() };
+      if (r.handle_platform && r.handle) return { platform: String(r.handle_platform), handle: String(r.handle).toLowerCase() };
+      throw new BadRequestException('That user has no email or handle on record.');
+    }
+    if (q.email) return { email: q.email.trim().toLowerCase() };
+    if (q.platform && q.handle) return { platform: q.platform, handle: q.handle.replace(/^@/, '').replace(/#\d+$/, '').trim().toLowerCase() };
+    throw new BadRequestException('Pass an email, a platform and handle, or an external_user_id.');
+  }
+
+  /**
+   * Payouts to one person from this partner that really hold money: funded and waiting, or already withdrawn. Drafts, unfunded
+   * rows and payouts the company took back are never listed. Scoped to the partner of the API key, so a key only ever reads its own.
+   */
+  private userPayouts(partnerId: string, id: { email?: string; platform?: string; handle?: string }, columns: string, opts?: { count: 'exact' }) {
+    // The columns differ per call, which the typed builder cannot express, so this one query helper is untyped.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = (this.supabase.payments as any).select(columns, opts).eq('partner_id', partnerId);
+    q = id.email ? q.eq('recipient_email', id.email) : q.eq('recipient_address', `PENDING_SOCIAL:${id.platform}:${id.handle}`);
+    return q.or('partner_withdrawn_at.not.is.null,status.in.(PRIVATE_TRANSFER_PENDING,SUCCESS)');
+  }
+
+  /** What one of the partner's users can withdraw now, what they already withdrew, and how many payouts that is. */
+  async userBalanceViaApi(integratorId: string, query: { email?: string; platform?: string; handle?: string; external_user_id?: string }) {
+    const partner = await this.partnerForIntegrator(integratorId);
+    const id = await this.userIdentity(partner.id, query);
+    let available = 0;
+    let withdrawn = 0;
+    let payouts = 0;
+    for (let from = 0; from < 20_000; from += 1000) {
+      const { data, error } = await this.userPayouts(partner.id, id, 'amount, partner_withdrawn_at').range(from, from + 999);
+      if (error) throw new ServiceUnavailableException('Balances are temporarily unavailable. Please try again soon.');
+      const rows = (data ?? []) as Array<{ amount: number | string; partner_withdrawn_at: string | null }>;
+      for (const r of rows) {
+        const amount = Number(r.amount) || 0;
+        if (r.partner_withdrawn_at) withdrawn += amount;
+        else available += amount;
+        payouts++;
+      }
+      if (rows.length < 1000) break;
+    }
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    return {
+      identity: id.email ?? `${id.platform}:${id.handle}`,
+      available_usd: r2(available),
+      withdrawn_usd: r2(withdrawn),
+      total_received_usd: r2(available + withdrawn),
+      payouts,
+    };
+  }
+
+  /** One page of a user's payouts, newest first, with the total so a page picker can be built. */
+  async userHistoryViaApi(integratorId: string, query: { email?: string; platform?: string; handle?: string; external_user_id?: string; page?: number; limit?: number }) {
+    const partner = await this.partnerForIntegrator(integratorId);
+    const id = await this.userIdentity(partner.id, query);
+    const page = Math.max(1, Math.floor(query.page ?? 1));
+    const limit = Math.min(100, Math.max(1, Math.floor(query.limit ?? 20)));
+    const { data, error, count } = await this.userPayouts(partner.id, id, 'id, amount, description, created_at, paid_at, partner_withdrawn_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range((page - 1) * limit, page * limit - 1);
+    if (error) throw new ServiceUnavailableException('History is temporarily unavailable. Please try again soon.');
+    const rows = (data ?? []) as Array<{ id: string; amount: number | string; description: string | null; created_at: string; paid_at: string | null; partner_withdrawn_at: string | null }>;
+    // The partner's own reference for each payout (what they put in external_ref when they drafted the batch).
+    const refs = new Map<string, string | null>();
+    if (rows.length) {
+      const { data: items } = await selectInChunks<{ payment_id: string | null; external_ref: string | null }>(
+        rows.map((r) => r.id),
+        (g) => this.supabase.payoutBatchItems.select('payment_id, external_ref').in('payment_id', g),
+      );
+      for (const i of items) if (i.payment_id) refs.set(i.payment_id, i.external_ref);
+    }
+    const total = count ?? rows.length;
+    return {
+      identity: id.email ?? `${id.platform}:${id.handle}`,
+      page,
+      limit,
+      total,
+      has_more: page * limit < total,
+      items: rows.map((r) => ({
+        payment_id: r.id,
+        amount: Number(r.amount) || 0,
+        message: r.description ?? null,
+        external_ref: refs.get(r.id) ?? null,
+        received_at: r.paid_at ?? r.created_at,
+        state: r.partner_withdrawn_at ? ('withdrawn' as const) : ('available' as const),
+        withdrawn_at: r.partner_withdrawn_at ?? null,
+      })),
+    };
   }
 
   async listViaApi(integratorId: string, limit = 25) {
@@ -878,7 +1004,7 @@ export class PartnerPayoutsService {
     const paymentIds = items.map((i) => i.payment_id).filter((id): id is string => !!id);
     const byId = new Map<string, { status: string; partner_fee_usdc: number | null; partner_withdrawn_at: string | null }>();
     if (paymentIds.length) {
-      const { data } = await this.supabase.payments.select('id, status, partner_fee_usdc, partner_withdrawn_at').in('id', paymentIds).eq('partner_id', partnerId);
+      const { data } = await selectInChunks<{ id: string; status: string; partner_fee_usdc: number | null; partner_withdrawn_at: string | null }>(paymentIds, (g) => this.supabase.payments.select('id, status, partner_fee_usdc, partner_withdrawn_at').in('id', g).eq('partner_id', partnerId));
       for (const p of data ?? []) byId.set(p.id as string, p as never);
     }
     // Money already on its way: every payout of this batch sits in a proposal that is waiting for approval, was sent,

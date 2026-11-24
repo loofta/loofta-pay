@@ -261,3 +261,43 @@ export interface PartnerBatch {
     withdrawn: boolean;
   }>;
 }
+
+/** Which of your users to look up: an email, a platform and handle, or the id you gave them when you imported them. */
+export type PartnerUserRef =
+  | string
+  | { email: string }
+  | { platform: "twitter" | "discord" | "github" | "telegram"; handle: string }
+  | { externalUserId: string };
+
+/** What one of your users has received from you. */
+export interface UserBalance {
+  identity: string;
+  /** USD they can withdraw right now. */
+  availableUsd: number;
+  /** USD they already withdrew. */
+  withdrawnUsd: number;
+  totalReceivedUsd: number;
+  /** How many payouts that adds up from. */
+  payouts: number;
+}
+
+export interface UserPayout {
+  paymentId: string;
+  amount: number;
+  message: string | null;
+  /** The externalRef you set on the row when you drafted the batch. */
+  externalRef: string | null;
+  receivedAt: string;
+  state: "available" | "withdrawn";
+  withdrawnAt: string | null;
+}
+
+/** One page of a user's payouts, newest first. */
+export interface UserHistory {
+  identity: string;
+  page: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+  items: UserPayout[];
+}

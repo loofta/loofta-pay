@@ -22,6 +22,7 @@ import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { ATA_RENT_LAMPORTS } from '@/common/ata-rent-recovery';
 import { COMPRESS_PER_TX, compressedPayoutsEnabledFor } from '@/common/light-compression.service';
+import { updateInChunks } from '@/common/in-chunks';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { PartnersService, Partner } from './partners.service';
 import { PartnerRole, can } from './partner-roles';
@@ -754,10 +755,10 @@ export class PartnerTreasuryService {
 
       const { count: previous } = await this.supabase.partnerTreasuryProposals.select('id', { count: 'exact', head: true }).eq('partner_id', partner.id).eq('batch_id', batchId);
       const paymentIds = chunk.map((t) => t.claimId);
-      await this.supabase.payments.update({ sender_user_id: userId }).in('id', paymentIds);
+      await updateInChunks(paymentIds, (group) => this.supabase.payments.update({ sender_user_id: userId }).in('id', group));
       // Which kind of burner holds each payout. Separate from the update above so an old database without the column
       // (migration not run yet) never blocks the old mode; an error here is ignored on purpose when the flag is off.
-      const flagged = await this.supabase.payments.update({ burner_compressed: compressed }).in('id', paymentIds);
+      const flagged = await updateInChunks(paymentIds, (group) => this.supabase.payments.update({ burner_compressed: compressed }).in('id', group));
       if (compressed && flagged.error) throw new ServiceUnavailableException('Payouts are temporarily unavailable. Please try again in a little while.');
       const proposalId = await this.insertProposal({
         partner_id: partner.id,

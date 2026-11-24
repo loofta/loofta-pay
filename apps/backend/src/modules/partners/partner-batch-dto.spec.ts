@@ -25,9 +25,13 @@ describe('CreatePartnerBatchDto as the SDK sends it', () => {
     }
   });
 
-  it('still rejects unknown fields and more than 100 rows', async () => {
+  it('accepts a batch of 1,000 payouts and rejects 1,001', async () => {
+    await expect(check(CreatePartnerBatchDto, { idempotency_key: 'k', rows: Array.from({ length: 1000 }, () => row) })).resolves.toBeDefined();
+    await expect(check(CreatePartnerBatchDto, { idempotency_key: 'k', rows: Array.from({ length: 1001 }, () => row) })).rejects.toBeDefined();
+  });
+
+  it('still rejects unknown fields', async () => {
     await expect(check(CreatePartnerBatchDto, { idempotency_key: 'k', rows: [row], approve: true })).rejects.toBeDefined();
-    await expect(check(CreatePartnerBatchDto, { idempotency_key: 'k', rows: Array.from({ length: 101 }, () => row) })).rejects.toBeDefined();
   });
 });
 

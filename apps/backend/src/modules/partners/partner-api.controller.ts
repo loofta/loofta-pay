@@ -6,7 +6,7 @@ import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { RequireScope } from '@/common/decorators/require-scope.decorator';
 import type { AuthenticatedIntegrator } from '@/modules/integrators/integrators.service';
 import { CreatePartnerBatchDto } from './dto/partner-batch.dto';
-import { SetWebhookDto, SetWithdrawOptionsDto } from './dto/partner.dto';
+import { SetWebhookDto, SetWithdrawOptionsDto, UserQueryDto } from './dto/partner.dto';
 import { PartnerKeysService } from './partner-keys.service';
 import { PartnerPayoutsService } from './partner-payouts.service';
 import { PartnersService } from './partners.service';
@@ -116,6 +116,22 @@ export class PartnerApiController {
   @ApiOperation({ summary: 'Set (or clear with null) the https URL that receives signed payout and batch events. Returns the signing secret.' })
   async setWebhook(@Body() dto: SetWebhookDto, @Req() req: { integrator: AuthenticatedIntegrator }) {
     return this.keys.setWebhookForIntegrator(req.integrator.id, dto.url ?? null);
+  }
+
+  @Get('users/balance')
+  @RequireScope('portal:token')
+  @RateLimit(240, 60, 'partner-api:user-balance', 'integrator')
+  @ApiOperation({ summary: 'What one of your users can withdraw now, and what they already withdrew. Pass an email, a platform and handle, or your own external_user_id.' })
+  async userBalance(@Query() query: UserQueryDto, @Req() req: { integrator: AuthenticatedIntegrator }) {
+    return this.payouts.userBalanceViaApi(req.integrator.id, query);
+  }
+
+  @Get('users/history')
+  @RequireScope('portal:token')
+  @RateLimit(240, 60, 'partner-api:user-history', 'integrator')
+  @ApiOperation({ summary: 'One page of the payouts a user received from you, newest first. page starts at 1, limit is 1 to 100.' })
+  async userHistory(@Query() query: UserQueryDto, @Req() req: { integrator: AuthenticatedIntegrator }) {
+    return this.payouts.userHistoryViaApi(req.integrator.id, query);
   }
 
   @Get('withdraw-options')
