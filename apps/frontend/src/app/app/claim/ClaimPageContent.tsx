@@ -9,6 +9,8 @@ import type { TokenSelection } from "@/app/utils/types";
 import { Button } from "@/components/ui/button";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Input } from "@/components/ui/input";
+import { PEER_PLATFORMS } from "@/lib/peerPlatforms";
+import { ClaimCashTiles } from "@/components/claim/ClaimCashTiles";
 import { useToast } from "@/components/ui/use-toast";
 import { findTokenBySelection } from "@/lib/tokens";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
@@ -48,6 +50,16 @@ function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Logo tile backgrounds, same colors the claim page's cash-out list uses. */
+const PAY_APP_BG: Record<string, string> = {
+  venmo: "#3D95CE",
+  cashapp: "#00D632",
+  revolut: "#191C1F",
+  wise: "#9FE870",
+  paypal: "#FFFFFF",
+  xmoney: "#000000",
+};
+
 /** Minimum for a payment request created in the web app. The API enforces it too. */
 const APP_MIN_REQUEST_USD = 5;
 
@@ -62,6 +74,8 @@ async function createClaim(
     cluster?: 'devnet' | 'mainnet';
     isPrivate?: boolean;
     feeOnSender?: boolean;
+    payoutMethod?: string;
+    payoutDetail?: string;
   },
   accessToken?: string | null,
 ): Promise<{ id: string; link: string }> {
@@ -103,9 +117,14 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const [recipient, setRecipient] = useState<string>("");
   const [recipientPrefilled, setRecipientPrefilled] = useState(false);
   const [receiveDestination, setReceiveDestination] = useState<"loofta" | "other">("loofta");
-  /** "Cash" request: lands in the Loofta wallet as USDC, then the owner cashes out to Venmo, Cash App,
-   * Revolut or Zelle from the claim page (that step needs their own wallet signature, so it can't be pre-sent). */
+  /** "Payment app" request: lands in the Loofta wallet as USDC, then the owner cashes out to the app they
+   * picked (Venmo, Cash App, UPI, ...) from the claim page, fast and 1% under market. That step needs their
+   * own wallet signature, so it can't be pre-sent. */
   const [wantCash, setWantCash] = useState(false);
+  const [payAppId, setPayAppId] = useState<string>("venmo");
+  const [payAppHandle, setPayAppHandle] = useState("");
+  const payApp = PEER_PLATFORMS.find((p) => p.id === payAppId) ?? PEER_PLATFORMS[0];
+  const payAppValid = !wantCash || payAppHandle.trim().length >= 2;
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<string>("");
   const [gifUrl, setGifUrl] = useState<string>("");
@@ -326,12 +345,11 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         cluster: networkMode === "mainnet" ? "mainnet" : "devnet",
         isPrivate: effectivePrivate,
         feeOnSender,
+        ...(wantCash && receiveDestination === "loofta"
+          ? { payoutMethod: payApp.id, payoutDetail: payAppHandle.trim() }
+          : {}),
       }, accessToken);
       setCreatedLink(res.link);
-      if (wantCash && receiveDestination === "loofta") {
-        // Open the claim page on the P2P cash-out (Venmo, Cash App, ...) first. Per-browser convenience only.
-        try { window.localStorage.setItem("loofta:preferredClaimCashMethod", "p2p"); } catch { /* best-effort */ }
-      }
       if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
         posthog.capture("payment_link_created", {
           amount_usd: Number(amountUsdStr),
@@ -770,23 +788,6 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             )}
                           </button>
 
-                          <button
-                            type="button"
-                            onClick={() => { setReceiveDestination("loofta"); setIsPrivate(true); setWantCash(true); }}
-                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${wantCash ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20"}`}
-                          >
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${wantCash ? "bg-[#FF7A2A]/20 border border-[#FF7A2A]/40" : "bg-white/10 border border-white/20"}`}>
-                              <Wallet className={`w-5 h-5 ${wantCash ? "text-[#FF7A2A]" : "text-gray-700"}`} />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <span className="font-semibold text-gray-900 block">Venmo, Cash App and more</span>
-                              <span className="text-base text-gray-500">Paid in USDC, then cash out to Venmo, Cash App, Revolut or Zelle</span>
-                            </div>
-                            {wantCash && (
-                              <span className="text-base font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
-                            )}
-                          </button>
-
                           <div className="flex items-center gap-3">
                             <div className="flex-1 h-px bg-white/10" />
                             <span className="text-base font-medium text-gray-400">or</span>
@@ -816,6 +817,31 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             ) : (
                               <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />
                             )}
+                          </button>
+
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 h-px bg-white/10" />
+                            <span className="text-base font-medium text-gray-400">or</span>
+                            <div className="flex-1 h-px bg-white/10" />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => { setReceiveDestination("loofta"); setIsPrivate(true); setWantCash(true); }}
+                            className={`flex flex-col gap-3 w-full p-4 rounded-xl border transition-all text-left ${wantCash ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20"}`}
+                          >
+                            <div className="flex items-center gap-3 w-full">
+                              <div className="flex-1 min-w-0">
+                                <span className="font-semibold text-gray-900 block">Receive on a payment app</span>
+                                <span className="text-base text-gray-500">Venmo, Cash App, UPI and more</span>
+                              </div>
+                              {wantCash ? (
+                                <span className="text-base font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
+                              ) : (
+                                <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-sm font-medium text-amber-300 shrink-0">1% fee</span>
+                              )}
+                            </div>
+                            <ClaimCashTiles />
                           </button>
                         </div>
 
@@ -940,7 +966,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                     {/* Step 2 header: amount + destination summary, editable via Change */}
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-slate-300 text-xl font-sans font-medium">
-                        ${amount || "0"} · {receiveDestination === "loofta" ? "Receive on Loofta" : (selectedTo ? `${selectedTo.symbol} on ${selectedTo.chain}` : "another wallet")}
+                        ${amount || "0"} · {wantCash ? "Payment app" : receiveDestination === "loofta" ? "Receive on Loofta" : (selectedTo ? `${selectedTo.symbol} on ${selectedTo.chain}` : "another wallet")}
                       </p>
                       <button
                         type="button"
@@ -950,6 +976,45 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         Change
                       </button>
                     </div>
+
+                    {/* Payment app: pick which one, then the username to pay out to */}
+                    {wantCash && (
+                      <div className="space-y-3">
+                        <p className="text-gray-600 text-base">Which app?</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {PEER_PLATFORMS.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => { setPayAppId(p.id); setPayAppHandle(""); }}
+                              className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${payAppId === p.id ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20"}`}
+                            >
+                              <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-xl border-2 border-[#141418]" style={{ background: PAY_APP_BG[p.id] ?? "#6D1ED4" }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={p.logo} alt="" className="h-5 w-5 object-contain" />
+                              </span>
+                              <span className="min-w-0 truncate text-base font-semibold text-slate-100">{p.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <div>
+                          <label className="text-gray-600 mb-1 block text-base">{payApp.idLabel}</label>
+                          <Input
+                            type="text"
+                            value={payAppHandle}
+                            onChange={(e) => setPayAppHandle(e.target.value)}
+                            placeholder={payApp.placeholder}
+                            className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 bg-white/5 border-white/10 focus:border-orange-400"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck={false}
+                          />
+                          <p className="mt-1.5 text-slate-400 text-base">
+                            When it is paid, you cash out to {payApp.name} in one tap. Fast payout, 1% fee.
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Options */}
                     <div className="space-y-4 pt-1">
@@ -1052,7 +1117,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                     {authenticated && !showAccessRequested ? (
                       <GradientActionButton
                         onClick={() => onCreate()}
-                        disabled={creating || !canContinueStep1}
+                        disabled={creating || !canContinueStep1 || !payAppValid}
                         loading={creating}
                         loadingText="Creating…"
                       >

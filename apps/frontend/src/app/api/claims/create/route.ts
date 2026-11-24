@@ -19,6 +19,9 @@ const INTERNAL_SECRET = process.env.LOOFTA_INTERNAL_SECRET;
  * Telegram bot and the Twitter bot create payments through the backend and keep their own minimums. */
 const APP_MIN_REQUEST_USD = 5;
 
+/** Payment apps a request can be paid out to. Mirrors PEER_PLATFORMS. */
+const REQUEST_PAYOUT_METHODS = new Set(["venmo", "cashapp", "revolut", "zelle", "xmoney", "wise", "paypal", "chime", "monzo", "upi"]);
+
 /** Every payment routes through a burner and requires an explicit claim — mint one via the
  * backend, which alone has SEND_PAYMENT_ENC_KEY/KMS access to encrypt the burner secret. */
 async function mintBurner(authHeader: string): Promise<{ burner_address: string; burner_encrypted_secret: string } | null> {
@@ -47,7 +50,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Add an email or a social account to your profile to use this feature." }, { status: 403 });
   }
   try {
-    const { amount, toSel, recipient, description, direction, cluster, feeOnSender, isPrivate } = await request.json();
+    const { amount, toSel, recipient, description, direction, cluster, feeOnSender, isPrivate, payoutMethod, payoutDetail } = await request.json();
     if (!amount || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -75,6 +78,23 @@ export async function POST(request: Request) {
     const destToken = isSolanaDest ? "USDC" : reqSymbol;
     if (!isValidAddressForChain(String(recipient).trim(), destChain)) {
       return NextResponse.json({ error: `Recipient must be a valid ${isSolanaDest ? "Solana" : destChain} wallet address.` }, { status: 400 });
+    }
+
+    // Optional payout to a payment app: stored with the request, used by the claim page later.
+    let requestedPayout: { requested_payout_method: string; requested_payout_detail: string } | null = null;
+    if (payoutMethod) {
+      const method = String(payoutMethod).trim().toLowerCase();
+      const detail = String(payoutDetail ?? "").trim();
+      if (!REQUEST_PAYOUT_METHODS.has(method)) {
+        return NextResponse.json({ error: "Unsupported payment app." }, { status: 400 });
+      }
+      if (!isSolanaDest) {
+        return NextResponse.json({ error: "Payment apps are paid out from USDC on Solana." }, { status: 400 });
+      }
+      if (detail.length < 2 || detail.length > 100 || /[\u0000-\u001f]/.test(detail)) {
+        return NextResponse.json({ error: "Enter your username for that payment app." }, { status: 400 });
+      }
+      requestedPayout = { requested_payout_method: method, requested_payout_detail: detail };
     }
 
     // Privacy can only be disabled for a genuinely external wallet — never for a wallet
@@ -126,6 +146,7 @@ export async function POST(request: Request) {
         is_private: isSolanaDest && isPrivate !== false,
         burner_address: burner.burner_address,
         burner_encrypted_secret: burner.burner_encrypted_secret,
+        ...(requestedPayout ?? {}),
       })
       .select("id")
       .single();

@@ -2362,14 +2362,39 @@ export function ClaimPayView({
   const keepClaimCard = !!payoutReceipt && payoutReceipt.method !== "wallet";
   const peerCashoutReceipt = payoutReceipt && PEER_PAYOUT_METHODS.has(payoutReceipt.method) ? payoutReceipt : null;
 
+  // A request created with "Receive on a payment app" carries the app and username the owner chose;
+  // its cash-out is the fast option (1% under market) by default.
+  const requestedPayoutMethod = String((claim as { requested_payout_method?: string | null } | null)?.requested_payout_method || "");
+  const requestedPayoutDetail = String((claim as { requested_payout_detail?: string | null } | null)?.requested_payout_detail || "");
+  const hasRequestedPayout = !!requestedPayoutMethod && !!requestedPayoutDetail && PEER_PAYOUT_METHODS.has(requestedPayoutMethod);
+
   const openPeerReceive = (platformId: string, identifier: string, amountUsd: number, autoStart: boolean) => {
     window.dispatchEvent(new CustomEvent("openBalanceModal", {
       detail: {
         tab: "withdraw",
         method: "peer",
-        peerPay: { platformId, identifier, amountUsd, intent: "receive", autoStart },
+        peerPay: {
+          platformId, identifier, amountUsd, intent: "receive", autoStart,
+          ...(hasRequestedPayout && platformId === requestedPayoutMethod ? { fast: true } : {}),
+        },
       },
     }));
+  };
+
+  /** Claim into the Loofta wallet, then start the cash-out to the app and username chosen when the request was made. */
+  const claimToRequestedApp = () => {
+    const amountUsd = parseFloat(claim?.amount || "0") || 0;
+    const receipt = { method: requestedPayoutMethod, status: "in_wallet", eta: "Cashing out", detail: requestedPayoutDetail };
+    setClaimInitiated(true);
+    claimAsRecipientMutation.mutate(
+      { payoutMethod: receipt.method, payoutStatus: receipt.status, payoutEtaLabel: receipt.eta, payoutDetail: receipt.detail },
+      {
+        onSuccess: () => {
+          void persistPayout(receipt);
+          openPeerReceive(receipt.method, receipt.detail, amountUsd, true);
+        },
+      },
+    );
   };
 
   const persistPayout = async (next: { method: string; status: string; eta: string | null; detail: string | null }) => {
@@ -2914,6 +2939,37 @@ export function ClaimPayView({
           <span>This payment was sent privately</span>
         </div>
       )}
+      {hasRequestedPayout && !walletClaimChosen && (() => {
+        const reqPlatform = PEER_PLATFORMS.find((p) => p.id === requestedPayoutMethod);
+        return (
+          <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              {reqPlatform?.logo && (
+                <DepositIcons icons={[{ src: reqPlatform.logo, bg: requestedPayoutMethod === "venmo" ? "#3D95CE" : requestedPayoutMethod === "cashapp" ? "#00D632" : requestedPayoutMethod === "revolut" ? "#191C1F" : requestedPayoutMethod === "wise" ? "#9FE870" : requestedPayoutMethod === "paypal" ? "#FFFFFF" : requestedPayoutMethod === "xmoney" ? "#000000" : "#6D1ED4" }]} />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-semibold text-slate-100">Paid out to {reqPlatform?.name ?? requestedPayoutMethod}</p>
+                <p className="text-base text-slate-500 truncate">{requestedPayoutDetail}</p>
+              </div>
+              <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-sm font-medium text-amber-300 shrink-0">Fast · 1% fee</span>
+            </div>
+            <button
+              type="button"
+              onClick={claimToRequestedApp}
+              disabled={claimActionDisabled}
+              className={cn(
+                "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
+                mobile ? "py-4 text-base" : "py-3 text-base",
+                "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                claimActionDisabled && "opacity-50 cursor-not-allowed",
+              )}
+            >
+              {claimAsRecipientMutation.isPending ? "Claiming…" : `Claim & cash out to ${reqPlatform?.name ?? requestedPayoutMethod}`}
+            </button>
+            <p className="text-base text-slate-500 text-center">Or choose another way to claim below.</p>
+          </div>
+        );
+      })()}
       {showBankClaimOption && !walletClaimChosen ? (
         !cashOptionsOpen ? (
           <>

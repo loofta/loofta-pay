@@ -183,6 +183,7 @@ export default function Home() {
       setShowClaimOverlay(true);
       requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
     }
+    // The receive tab here only hosts the create form. Everything else about receiving lives on /app/receive.
   }, [searchParams]);
 
   // ?balance=topup|withdraw|history — lets an external link (marketing pages, docs, claim P2P
@@ -1309,87 +1310,14 @@ export default function Home() {
                 <>
                   <button
                     type="button"
-                    onClick={() => { setShowClaimOverlay(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
+                    onClick={() => router.push("/app/receive")}
                     className="text-slate-400 hover:text-white text-base font-medium"
                   >
                     {t('backToReceive')}
                   </button>
                   <ClaimPageContent embedInApp />
                 </>
-              ) : (
-                <>
-                  {/* Share your personal link */}
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
-                    <p className="text-slate-300 text-xl font-medium flex gap-3 font-sans items-center">
-                      <LinkIcon className={"text-orange-400 w-4 h-4"} />
-                      {t('sharePersonalLink')}
-                    </p>
-                    {authenticated && username ? (
-                      <>
-                        <p className="text-slate-300 text-lg sm:text-base">
-                          {t('personalLinkDescription')}
-                        </p>
-                        <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
-                          <span className="flex-1 text-base sm:text-sm font-mono text-white truncate">
-                            {typeof window !== "undefined" ? `${window.location.origin}/me/@${username}` : `/me/@${username}`}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const link = typeof window !== "undefined" ? `${window.location.origin}/me/@${username}` : "";
-                              navigator.clipboard.writeText(link);
-                              setLinkCopied(true);
-                              setTimeout(() => setLinkCopied(false), 2000);
-                            }}
-                            className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 hover:text-white hover:bg-white/15 text-sm font-medium transition-colors"
-                          >
-                            {linkCopied ? t('copied') : t('copy')}
-                          </button>
-                        </div>
-                        <Button
-                          variant="receiveSignIn"
-                          className="w-full h-12 rounded-xl"
-                          onClick={() => useAuthStore.getState().setOpenShareModal(true)}
-                        >
-                          {t('shareAndSettings')}
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-slate-300 text-base sm:text-sm">
-                          {t('signInForLink')}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="receiveSignIn"
-                          onClick={() => privyLogin({ loginMethods: [...PRIVY_LOGIN_METHODS], disableSignup: false })}
-                          className="w-full h-12 rounded-xl font-semibold"
-                        >
-                          {t('signInToGetLink')}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Create new payment link */}
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
-                    <p className="text-slate-300 text-xl flex gap-3 font-sans font-medium items-center">
-                      <PlusIcon className={"text-orange-400 w-4 h-4"} />
-                      {t('createPaymentLink')}
-                    </p>
-                    <p className="text-slate-300 text-lg sm:text-base">
-                      {t('createLinkDescription')}
-                    </p>
-                    <Button
-                      type="button"
-                      onClick={() => { setShowClaimOverlay(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
-                      className="w-full h-11 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 border-0"
-                    >
-                      {t('createNewLink')}
-                    </Button>
-                  </div>
-                </>
-              )}
+              ) : null}
             </div>
           )}
         </div>
