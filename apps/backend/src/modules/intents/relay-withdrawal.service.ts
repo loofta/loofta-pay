@@ -50,6 +50,29 @@ export const RELAY_WITHDRAW_ASSETS = {
     address: '0x5fc5360d0400a0fd4f2af552add042d716f1d168',
     decimals: 6,
   },
+  // Solana network: USDC -> SOL / USDT / JUP through Relay (not NEAR Intents). Addresses are the
+  // canonical mints; the native SOL "address" is Relay's all-ones system program id.
+  'solana:sol': {
+    chainId: SOLANA_CHAIN_ID,
+    chain: 'solana',
+    symbol: 'SOL',
+    address: '11111111111111111111111111111111',
+    decimals: 9,
+  },
+  'solana:usdt': {
+    chainId: SOLANA_CHAIN_ID,
+    chain: 'solana',
+    symbol: 'USDT',
+    address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    decimals: 6,
+  },
+  'solana:jup': {
+    chainId: SOLANA_CHAIN_ID,
+    chain: 'solana',
+    symbol: 'JUP',
+    address: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+    decimals: 6,
+  },
 } as const;
 
 export type RelayAssetKey = keyof typeof RELAY_WITHDRAW_ASSETS;
@@ -139,7 +162,7 @@ export class RelayWithdrawalService {
     const q = await this.fetchQuote({
       assetKey,
       amountUsdc,
-      recipient: PREVIEW_RECIPIENT,
+      recipient: RELAY_WITHDRAW_ASSETS[assetKey].chain === 'solana' ? PREVIEW_SOLANA_USER : PREVIEW_RECIPIENT,
       refundTo: PREVIEW_SOLANA_USER,
       useDepositAddress: false,
     });
@@ -174,7 +197,18 @@ export class RelayWithdrawalService {
   }> {
     const { userId, assetKey, amountUsdc, destinationAddress, refundAddress } = params;
     this.assertAmount(amountUsdc);
-    if (!/^0x[a-fA-F0-9]{40}$/.test(destinationAddress) || /^0x0{40}$/i.test(destinationAddress)) {
+    const asset = RELAY_WITHDRAW_ASSETS[assetKey];
+    if (asset.chain === 'solana') {
+      let ok = false;
+      try {
+        ok = new PublicKey(destinationAddress).toBase58() === destinationAddress;
+      } catch {
+        ok = false;
+      }
+      if (!ok || destinationAddress === '11111111111111111111111111111111') {
+        throw new Error('Enter a valid Solana address.');
+      }
+    } else if (!/^0x[a-fA-F0-9]{40}$/.test(destinationAddress) || /^0x0{40}$/i.test(destinationAddress)) {
       throw new Error('Enter a valid Robinhood Chain (EVM) address.');
     }
     try {
@@ -183,7 +217,6 @@ export class RelayWithdrawalService {
       throw new Error('Invalid refund address.');
     }
 
-    const asset = RELAY_WITHDRAW_ASSETS[assetKey];
     const q = await this.fetchQuote({
       assetKey,
       amountUsdc,

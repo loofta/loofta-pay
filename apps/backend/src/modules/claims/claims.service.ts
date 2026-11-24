@@ -675,7 +675,13 @@ export class ClaimsService {
       ...row,
       claim_burner_address: row.burner_address ?? null,
       claim_burner_encrypted_secret: row.burner_encrypted_secret ?? null,
-      to_symbol: row.token_amount != null && typeof row.to_token === 'string' && row.to_token ? row.to_token : 'USDC',
+      // SPL prizes carry their token in to_token (with token_amount); a payment request to an
+      // external wallet on another chain (e.g. BTC on bitcoin) carries it with a non-Solana to_chain.
+      to_symbol:
+        typeof row.to_token === 'string' && row.to_token &&
+        (row.token_amount != null || !['solana', 'sol', ''].includes(String(row.to_chain ?? 'solana').toLowerCase()))
+          ? row.to_token
+          : 'USDC',
       // compat aliases for legacy field names still consumed by page.tsx / admin UI
       paid_with_chain: row.from_chain ?? null,
       paid_with_token: row.from_token ?? null,

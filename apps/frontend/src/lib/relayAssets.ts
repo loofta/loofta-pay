@@ -27,6 +27,35 @@ export const RELAY_TOKENS: NearToken[] = [
     decimals: 6,
     logoURI: "https://assets.coingecko.com/coins/images/51281/standard/GDN_USDG_Token_200x200.png",
   },
+  // Solana network (withdraw to any Solana wallet). The three best-known tokens; USDC is already
+  // the balance itself. Routed through Relay, never NEAR Intents.
+  {
+    symbol: "SOL",
+    name: "Solana",
+    chain: "solana",
+    address: "11111111111111111111111111111111",
+    tokenId: "relay:solana:sol",
+    decimals: 9,
+    logoURI: "https://assets.coingecko.com/coins/images/4128/standard/solana.png",
+  },
+  {
+    symbol: "USDT",
+    name: "Tether",
+    chain: "solana",
+    address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    tokenId: "relay:solana:usdt",
+    decimals: 6,
+    logoURI: "https://assets.coingecko.com/coins/images/325/standard/Tether.png",
+  },
+  {
+    symbol: "JUP",
+    name: "Jupiter",
+    chain: "solana",
+    address: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    tokenId: "relay:solana:jup",
+    decimals: 6,
+    logoURI: "https://assets.coingecko.com/coins/images/34188/standard/jup.png",
+  },
 ];
 
 export function isRelayToken(t?: { tokenId?: string } | null): boolean {

@@ -1711,11 +1711,16 @@ function CryptoWithdraw({
   // ETH / USDG on Robinhood Chain are not in the NEAR Intents list; they route through Relay.
   // Relay has no private path and no devnet, so they only appear for plain mainnet withdrawals.
   const relayEnabled = !privately && !devnetMode;
-  const allTokens = useMemo(() => (relayEnabled ? [...tokens, ...RELAY_TOKENS] : tokens), [tokens, relayEnabled]);
+  // The Solana network is offered through Relay only (SOL / USDT / JUP), so the NEAR Intents Solana
+  // tokens are dropped here: otherwise a {symbol, chain} selection would resolve to the NEAR one.
+  const allTokens = useMemo(
+    () => (relayEnabled ? [...tokens.filter((t) => !isSolanaChain(t.chain)), ...RELAY_TOKENS] : tokens),
+    [tokens, relayEnabled],
+  );
   const token = findTokenBySelection(allTokens, selection);
   const relay = isRelayToken(token);
   const [relayFee, setRelayFee] = useState<number | null>(null);
-  const choices = allTokens.filter((t) => !isSolanaChain(t.chain) && (!usdc || t.tokenId !== usdc.tokenId));
+  const choices = allTokens.filter((t) => (!isSolanaChain(t.chain) || isRelayToken(t)) && (!usdc || t.tokenId !== usdc.tokenId));
   const amountNum = Number(amount);
   const addressOk = !!token && isValidAddressForChain(destination.trim(), token.chain);
   const stakeUp = useStakeUpsell(getAccessToken, userId, "withdraw_crypto");

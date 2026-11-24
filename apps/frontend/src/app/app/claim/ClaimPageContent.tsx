@@ -21,7 +21,6 @@ import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
 import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useAuthStore } from "@/store/auth";
-import { CROSS_CHAIN_ENABLED } from "@/lib/features";
 import { MessageInput } from "@/components/MessageInput";
 import posthog from "posthog-js";
 
@@ -48,6 +47,9 @@ function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+/** Minimum for a payment request created in the web app. The API enforces it too. */
+const APP_MIN_REQUEST_USD = 5;
 
 async function createClaim(
   formData: {
@@ -91,7 +93,8 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   }, [isStandaloneClaim, router]);
 
   const networkMode = useAuthStore((s) => s.networkMode);
-  const crossChainEnabled = CROSS_CHAIN_ENABLED || networkMode !== "mainnet";
+  // Requests can ask for any token on an external wallet, so the token picker is always on here.
+  const crossChainEnabled = true;
 
   const { data: rawTokens = [] } = useTokensQuery();
   const tokens = useMemo(() => rawTokens, [rawTokens]);
@@ -100,6 +103,9 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const [recipient, setRecipient] = useState<string>("");
   const [recipientPrefilled, setRecipientPrefilled] = useState(false);
   const [receiveDestination, setReceiveDestination] = useState<"loofta" | "other">("loofta");
+  /** "Cash" request: lands in the Loofta wallet as USDC, then the owner cashes out to Venmo, Cash App,
+   * Revolut or Zelle from the claim page (that step needs their own wallet signature, so it can't be pre-sent). */
+  const [wantCash, setWantCash] = useState(false);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<string>("");
   const [gifUrl, setGifUrl] = useState<string>("");
@@ -271,7 +277,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const recipientTrimmed = (recipient || "").trim();
   const recipientAddressValid = !recipientTrimmed || isValidAddressForChain(recipientTrimmed, selectedTo?.chain || "solana");
   const canContinueStep1 =
-    parsedAmount >= (effectivePrivate ? 1 : 0.01) &&
+    (usdValue ?? parsedAmount) >= APP_MIN_REQUEST_USD &&
     (receiveDestination === "loofta"
       ? !!(solanaWallet?.address && defaultLooftaToken)
       : !!selectedTo && !!recipientTrimmed && recipientAddressValid);
@@ -322,6 +328,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         feeOnSender,
       }, accessToken);
       setCreatedLink(res.link);
+      if (wantCash && receiveDestination === "loofta") {
+        // Open the claim page on the P2P cash-out (Venmo, Cash App, ...) first. Per-browser convenience only.
+        try { window.localStorage.setItem("loofta:preferredClaimCashMethod", "p2p"); } catch { /* best-effort */ }
+      }
       if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
         posthog.capture("payment_link_created", {
           amount_usd: Number(amountUsdStr),
@@ -728,8 +738,8 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                           USD
                         </span>
                       </div>
-                      {effectivePrivate && parsedAmount > 0 && (usdValue ?? parsedAmount) < 1 && (
-                        <p className="mt-1.5 text-base md:text-sm text-red-400">A private payment needs at least $1.00</p>
+                      {parsedAmount > 0 && (usdValue ?? parsedAmount) < APP_MIN_REQUEST_USD && (
+                        <p className="mt-1.5 text-base md:text-sm text-red-400">{`A payment request needs at least $${APP_MIN_REQUEST_USD}`}</p>
                       )}
                     </div>
 
@@ -741,10 +751,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         <div className="flex flex-col gap-3">
                           <button
                             type="button"
-                            onClick={() => { setReceiveDestination("loofta"); setIsPrivate(true); }}
-                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "loofta" ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20"}`}
+                            onClick={() => { setReceiveDestination("loofta"); setIsPrivate(true); setWantCash(false); }}
+                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "loofta" && !wantCash ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20"}`}
                           >
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 p-1.5 ${receiveDestination === "loofta" ? "bg-[#FF7A2A]/20 border border-[#FF7A2A]/40" : "bg-white/10 border border-white/20"}`}>
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 p-1.5 ${receiveDestination === "loofta" && !wantCash ? "bg-[#FF7A2A]/20 border border-[#FF7A2A]/40" : "bg-white/10 border border-white/20"}`}>
                               <LooftaIcon className="w-full h-full object-contain" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -755,8 +765,25 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                                   : "Your Loofta wallet"}
                               </span>
                             </div>
-                            {receiveDestination === "loofta" && solanaWallet?.address && defaultLooftaToken && (
+                            {receiveDestination === "loofta" && !wantCash && solanaWallet?.address && defaultLooftaToken && (
                               <span className="text-base font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Ready</span>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => { setReceiveDestination("loofta"); setIsPrivate(true); setWantCash(true); }}
+                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${wantCash ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20"}`}
+                          >
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${wantCash ? "bg-[#FF7A2A]/20 border border-[#FF7A2A]/40" : "bg-white/10 border border-white/20"}`}>
+                              <Wallet className={`w-5 h-5 ${wantCash ? "text-[#FF7A2A]" : "text-gray-700"}`} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <span className="font-semibold text-gray-900 block">Venmo, Cash App and more</span>
+                              <span className="text-base text-gray-500">Paid in USDC, then cash out to Venmo, Cash App, Revolut or Zelle</span>
+                            </div>
+                            {wantCash && (
+                              <span className="text-base font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
                             )}
                           </button>
 
@@ -770,6 +797,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             type="button"
                             onClick={() => {
                               setReceiveDestination("other");
+                              setWantCash(false);
                               setRecipient("");
                               const usdcSol = tokens.find(t => t.symbol?.toUpperCase() === 'USDC' && ['solana', 'sol'].includes(t.chain?.toLowerCase() ?? ''));
                               setToSel(usdcSol ? { symbol: usdcSol.symbol, chain: usdcSol.chain } : undefined);

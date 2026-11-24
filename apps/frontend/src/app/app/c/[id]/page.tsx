@@ -4267,7 +4267,8 @@ export function ClaimPayView({
       "IN_FLIGHT": "IN_FLIGHT",
       "PENDING_DEPOSIT": "PENDING_DEPOSIT",
       "PRIVATE_TRANSFER_PENDING": "PRIVATE_TRANSFER_PENDING",
-      "REFUNDED": "FAILED",
+      // Keep REFUNDED distinct so the payer sees "refunded", not a generic failure.
+      "REFUNDED": "REFUNDED",
       "FAILED": "FAILED",
       "EXPIRED": "FAILED",
       "CANCELLED": "FAILED",
