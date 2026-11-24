@@ -40,6 +40,8 @@ export class LotteryCronService {
    *  and does nothing unless an admin has enabled the quest. */
   @Cron(CronExpression.EVERY_HOUR)
   async processWeeklyQuest(): Promise<void> {
+    // Weekly quest removed from the app (PoolRip share reward dropped). Awarding is off.
+    return;
     if (!this.isProd) return;
     await this.weeklyQuest.processWeeklyQuest().catch(e =>
       this.logger.error(`processWeeklyQuest: ${e.message}`),
