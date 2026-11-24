@@ -465,7 +465,8 @@ Only payouts that are really funded appear. A payout you took back disappears fr
 
 When someone withdraws, Loofta currently takes $0.05 plus 0.3% of the amount. You can add your own fee (a fixed amount, a
 percent or both, never more than 25% of the payout) under Settings in the partner portal, and it is paid to your
-wallet on every withdrawal. The withdraw page shows the person what they will receive before they confirm.
+wallet on every withdrawal. The person sees one "Platform fee" line that adds your fee and Loofta's, and what they will
+receive before they confirm.
 
 ## Errors
 

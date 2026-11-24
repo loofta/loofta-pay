@@ -2,6 +2,10 @@ import { BadRequestException, ConflictException, ForbiddenException, ServiceUnav
 
 // spl-token and the claims module do not load under jest here. The withdraw service only needs them for balances and the sweep.
 let mockBalances: Record<string, bigint> = {};
+// Wallets (their USDC account address is the wallet itself in this fake) that have no USDC account yet.
+let mockMissingAccounts: string[] = [];
+jest.mock('@/common/token-account-exists', () => ({ tokenAccountExists: async (_c: unknown, ata: string) => !mockMissingAccounts.includes(ata) }));
+jest.mock('@/common/magicblock-private-transfer', () => ({ fetchSolPriceUsd: async () => 100 }));
 jest.mock('@solana/spl-token', () => ({
   getAssociatedTokenAddress: async (_mint: unknown, owner: { toBase58(): string }) => owner.toBase58(),
   getAccount: async (_conn: unknown, ata: string) => {
@@ -54,11 +58,14 @@ function make(opts: {
   historyBatches?: Array<{ id: string; label: string | null }>;
   historyError?: boolean;
   rates?: { flatUsd: number; bps: number };
+  missingAccounts?: string[];
+  ownWallet?: string | null;
   compressed?: Record<string, bigint>; // burner address -> compressed balance; turns the compressed feature on
 } = {}) {
   const partner = { ...basePartner, ...(opts.partner ?? {}) };
   const payments = opts.payments ?? [pay('a', 10, B1)];
   mockBalances = opts.balances ?? { [B1]: BigInt(10_000_000), [B2]: BigInt(10_000_000) };
+  mockMissingAccounts = opts.missingAccounts ?? [];
 
   const events: string[] = [];
   const stamps: Record<string, Record<string, unknown>> = {};
@@ -95,6 +102,7 @@ function make(opts: {
     payoutBatches: chain({ data: opts.historyBatches ?? [], error: null }),
   };
   const claims = {
+    recipientWalletFor: jest.fn(async () => opts.ownWallet ?? null),
     checkIsRecipient: jest.fn(async (id: string) => ({ isRecipient: !opts.notRecipient?.includes(id) })),
     claimAsRecipient: jest.fn(async (id: string) => {
       if (opts.sweepFails?.includes(id)) throw new Error('boom');
@@ -107,7 +115,7 @@ function make(opts: {
     assertFeeWalletReady: jest.fn(async () => { if (opts.feeWalletReady === false) throw new Error('not ready'); }),
     audit: jest.fn(),
   };
-  const sponsor = { getConnectionForCluster: () => ({}) };
+  const sponsor = { getConnectionForCluster: () => ({ getMinimumBalanceForRentExemption: async () => 1_488_440 }) };
   const config = { get: (k: string) => (k === 'SOLANA_CLUSTER' ? 'mainnet-beta' : k === 'PARTNER_COMPRESSED_PAYOUTS' && opts.compressed ? 'true' : undefined) };
   const light = { compressedBalance: jest.fn(async (_c: string, owner: { toBase58(): string }) => (opts.compressed ?? {})[owner.toBase58()] ?? BigInt(0)) };
   const feeSettings = { get: async () => opts.rates ?? { flatUsd: 0.05, bps: 30 } };
@@ -209,7 +217,19 @@ describe('partner withdraw confirm', () => {
     const { svc } = make({ rates: { flatUsd: 0, bps: 0 } });
     const q = await svc.quote('org_x', 'u1');
     expect(q.loofta_fee_usdc).toBe(0);
-    expect(q.fees?.some((f) => f.kind === 'loofta')).toBe(false);
+    // only the partner fee is left, still shown as the one Platform fee line
+    expect(q.fees).toHaveLength(1);
+    expect(q.fees?.[0]).toMatchObject({ kind: 'platform', label: 'Platform fee' });
+    expect(q.fees?.[0].usdc).toBeCloseTo(q.partner_fee_usdc, 6);
+  });
+
+  it('shows the person ONE Platform fee line that adds the partner fee and the Loofta fee', async () => {
+    const { svc } = make({ payments: [pay('a', 10, B1)] });
+    const q = await svc.quote('org_x', 'u1');
+    expect(q.fees).toHaveLength(1);
+    expect(q.fees?.[0].label).toBe('Platform fee');
+    expect(q.fees?.[0].usdc).toBeCloseTo(q.partner_fee_usdc + q.loofta_fee_usdc, 6);
+    expect(JSON.stringify(q.fees)).not.toMatch(/loofta/i);
   });
 
   it('refuses when the Loofta fee is higher than the one the page showed, and sweeps nothing', async () => {
@@ -385,6 +405,72 @@ describe('compressed payouts', () => {
     const { svc } = make({ payments: [pay('a', 10, B1), pay('b', 10, B2)], balances: { [B2]: BigInt(10_000_000) }, compressed: { [B1]: BigInt(10_000_000) } });
     const q = await svc.quote('org_x', 'u1');
     expect(q.gross_usdc).toBe(20);
+  });
+});
+
+describe('the person pays for a new wallet account', () => {
+  const NEW_WALLET = 'Stake11111111111111111111111111111111111111';
+  // 1,488,440 lamports at $100 a SOL is $0.149, plus a 15% cushion, rounded up to the cent
+  const FEE = 0.18;
+
+  it('a USDC withdrawal to a wallet with no USDC account carries the cost of creating it, shown as its own line', async () => {
+    const { svc } = make({ payments: [pay('a', 10, B1)], missingAccounts: [NEW_WALLET] });
+    const without = await svc.quote('org_x', 'u1');
+    const q = await svc.quote('org_x', 'u1', undefined, { method: 'usdc', destination: NEW_WALLET });
+    expect(q.setup_fee_usdc).toBe(FEE);
+    expect(q.net_usdc).toBeCloseTo(without.net_usdc - FEE, 6);
+    expect(q.fees).toHaveLength(2);
+    expect(q.fees?.[0]).toMatchObject({ kind: 'platform', label: 'Platform fee' });
+    expect(q.fees?.[1]).toMatchObject({ kind: 'setup', usdc: FEE });
+    expect(q.loofta_fee_usdc).toBeCloseTo(without.loofta_fee_usdc, 6); // Loofta's own fee is unchanged
+  });
+
+  it('costs nothing when the wallet already has a USDC account', async () => {
+    const { svc } = make({ payments: [pay('a', 10, B1)], missingAccounts: [] });
+    const q = await svc.quote('org_x', 'u1', undefined, { method: 'usdc', destination: NEW_WALLET });
+    expect(q.setup_fee_usdc).toBe(0);
+    expect(q.fees).toHaveLength(1);
+  });
+
+  it('charges nothing until it knows where the money lands', async () => {
+    const { svc } = make({ payments: [pay('a', 10, B1)], missingAccounts: [NEW_WALLET] });
+    expect((await svc.quote('org_x', 'u1')).setup_fee_usdc).toBe(0);
+  });
+
+  it('the other routes land in the person own Loofta wallet, so that is the account that is checked', async () => {
+    const own = 'Config1111111111111111111111111111111111111';
+    const { svc } = make({ payments: [pay('a', 10, B1)], ownWallet: own, missingAccounts: [own] });
+    const q = await svc.quote('org_x', 'u1', undefined, { method: 'token' });
+    expect(q.setup_fee_usdc).toBe(FEE);
+    const has = make({ payments: [pay('a', 10, B1)], ownWallet: own, missingAccounts: [] });
+    expect((await has.svc.quote('org_x', 'u1', undefined, { method: 'token' })).setup_fee_usdc).toBe(0);
+  });
+
+  it('an unknown route or a bad wallet address is ignored, never trusted', async () => {
+    const { svc } = make({ payments: [pay('a', 10, B1)], missingAccounts: [NEW_WALLET] });
+    expect((await svc.quote('org_x', 'u1', undefined, { method: 'nope', destination: NEW_WALLET })).setup_fee_usdc).toBe(0);
+    expect((await svc.quote('org_x', 'u1', undefined, { method: 'usdc', destination: 'not-a-wallet' })).setup_fee_usdc).toBe(0);
+  });
+
+  it('confirm stamps the setup cost with the Loofta fee, so the sweep leaves it with the fee payer, and the person is not charged blind', async () => {
+    const { svc, stamps } = make({ payments: [pay('a', 10, B1)], missingAccounts: [NEW_WALLET] });
+    const q = await svc.quote('org_x', 'u1', undefined, { method: 'usdc', destination: NEW_WALLET });
+    await svc.confirm('org_x', 'u1', { maxFeeUsdc: q.partner_fee_usdc, maxLooftaFeeUsdc: q.loofta_fee_usdc + q.setup_fee_usdc, destinationAddress: NEW_WALLET, method: 'usdc' });
+    expect(Number(stamps.a.partner_loofta_fee_usdc)).toBeCloseTo(q.loofta_fee_usdc + FEE, 6);
+  });
+
+  it('confirm refuses when the page did not include the setup cost, and sweeps nothing', async () => {
+    const { svc, events } = make({ payments: [pay('a', 10, B1)], missingAccounts: [NEW_WALLET] });
+    const q = await svc.quote('org_x', 'u1');
+    await expect(svc.confirm('org_x', 'u1', { maxFeeUsdc: q.partner_fee_usdc, maxLooftaFeeUsdc: q.loofta_fee_usdc, destinationAddress: NEW_WALLET, method: 'usdc' })).rejects.toThrow(/fee changed/i);
+    expect(events).toEqual([]);
+  });
+
+  it('a withdrawal too small to cover the account is refused instead of overdrawn', async () => {
+    const { svc } = make({ payments: [pay('a', 0.2, B1)], balances: { [B1]: BigInt(200_000) }, missingAccounts: [NEW_WALLET], partner: { fee_fixed_usd: 0, fee_percent_bps: 0, withdraw_min_usd: 0.01 } });
+    const q = await svc.quote('org_x', 'u1', undefined, { method: 'usdc', destination: NEW_WALLET });
+    expect(q.can_withdraw).toBe(false);
+    expect(q.reason).toMatch(/too small/i);
   });
 });
 

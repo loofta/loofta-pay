@@ -9,6 +9,9 @@ import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { LightCompressionService } from '@/common/light-compression.service';
 import { isValidSolanaAddress } from '@/common/solana-address';
+import { tokenAccountExists } from '@/common/token-account-exists';
+import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
+import { ATA_RENT_LAMPORTS } from '@/common/ata-rent-recovery';
 import { PartnersService, Partner, PublicPartner } from './partners.service';
 import { allocateFeeUnits, computeLooftaWithdrawFeeUsdc, computePartnerFeeUsdc, P2P_MIN_USD, P2P_RATE_PERCENT } from './partner-fee';
 import { PartnerFeeSettingsService } from './partner-fee-settings.service';
@@ -45,6 +48,8 @@ export interface WithdrawQuote {
   gross_usdc: number;
   partner_fee_usdc: number;
   loofta_fee_usdc: number;
+  /** One-time cost of creating the USDC account the money lands in, when it does not exist yet. Paid by the person withdrawing. 0 otherwise. */
+  setup_fee_usdc: number;
   /** The same fees as above, one line per owner, so the page can show who is paid what. */
   fees: PublicFeeLine[];
   net_usdc: number;
@@ -158,7 +163,33 @@ export class PartnerWithdrawService {
     return { rows };
   }
 
-  private async compute(partner: Partner, userId: string, method?: string) {
+  private rentCache: { lamports: number; at: number } | null = null;
+
+  /** What creating a USDC account costs us, in USD, with a small cushion for price moves, rounded up to the cent. */
+  private async accountSetupFeeUsd(): Promise<number> {
+    const conn = this.sponsor.getConnectionForCluster(this.isDevnet ? 'devnet' : 'mainnet');
+    if (!this.rentCache || Date.now() - this.rentCache.at > 10 * 60_000) {
+      const lamports = await conn.getMinimumBalanceForRentExemption(165).catch(() => ATA_RENT_LAMPORTS);
+      this.rentCache = { lamports, at: Date.now() };
+    }
+    const price = await fetchSolPriceUsd().catch(() => null);
+    const usd = price && price > 0 ? (this.rentCache.lamports / 1e9) * price * 1.15 : 0.25; // never free, even if the price feed is down
+    return Math.ceil(usd * 100) / 100;
+  }
+
+  /**
+   * The person pays for the account their money lands in. Loofta's fee payer creates it, so when the wallet has no USDC account
+   * yet this is its cost, shown before they confirm. Zero when the account exists, or when we do not know the wallet yet.
+   */
+  private async setupFee(target: string | null): Promise<number> {
+    if (!target || !isValidSolanaAddress(target)) return 0;
+    const conn = this.sponsor.getConnectionForCluster(this.isDevnet ? 'devnet' : 'mainnet');
+    const ata = await getAssociatedTokenAddress(this.usdcMint(), new PublicKey(target), true);
+    if (await tokenAccountExists(conn, ata)) return 0;
+    return this.accountSetupFeeUsd();
+  }
+
+  private async compute(partner: Partner, userId: string, method?: string, route: { destination?: string | null; ownWallet?: boolean } = {}) {
     const { rows } = await this.findPayouts(partner, userId);
     const available = rows.filter((r) => r.funded);
     const processing = rows.filter((r) => !r.funded);
@@ -179,7 +210,10 @@ export class PartnerWithdrawService {
     const partnerFee = partnerActive ? computePartnerFeeUsdc(partner, gross, { flatAlreadyPaid }) : 0;
     // Loofta's fee is the same on every route: a flat part and a percentage, always shown to the recipient first.
     const looftaFee = computeLooftaWithdrawFeeUsdc(gross, { flatAlreadyPaid, ...(await this.feeSettings.get()) });
-    const net = gross - partnerFee - looftaFee;
+    // Where the money will land: the wallet they typed, or (for the other routes) their own Loofta wallet.
+    const target = route.destination ?? (route.ownWallet ? await this.claims.recipientWalletFor(userId) : null);
+    const setupFee = grossUnits > BigInt(0) ? await this.setupFee(target).catch(() => 0) : 0;
+    const net = gross - partnerFee - looftaFee - setupFee;
     let feeLines: PublicFeeLine[] = [];
     try {
       feeLines = publicLines(
@@ -188,6 +222,7 @@ export class PartnerWithdrawService {
     } catch {
       // Fees that cannot be built (too small, no wallet) already turn into a plain reason below.
     }
+    if (setupFee > 0) feeLines.push({ kind: 'setup', label: 'New wallet account (one time)', usdc: setupFee });
 
     let reason: string | null = null;
     if (!available.length) reason = processing.length ? 'Your payout is still being processed.' : 'Nothing to withdraw yet.';
@@ -207,7 +242,7 @@ export class PartnerWithdrawService {
 
     const strip = ({ units: _u, registered: _r, stampedAt: _s, ...v }: PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }): PayoutView => v;
     return {
-      available, processing: processing.map(strip), partnerFee, looftaFee, gross, net, reason, feeLines,
+      available, processing: processing.map(strip), partnerFee, looftaFee, setupFee, gross, net, reason, feeLines,
       view: available.map(strip),
     };
   }
@@ -255,10 +290,13 @@ export class PartnerWithdrawService {
     }));
   }
 
-  async quote(orgId: string, userId: string, demo?: DemoQuery): Promise<WithdrawQuote> {
+  async quote(orgId: string, userId: string, demo?: DemoQuery, route: { method?: string; destination?: string } = {}): Promise<WithdrawQuote> {
     if (orgId === DEMO_ORG_ID) return demoQuote(demo, await this.feeSettings.get());
     const partner = await this.loadPartner(orgId);
-    const c = await this.compute(partner, userId);
+    // Once the person has picked a route (and, for USDC, typed a wallet) the quote includes the cost of a new account there.
+    const method = route.method && WITHDRAW_METHODS.includes(route.method as WithdrawMethod) ? route.method : undefined;
+    const destination = method === 'usdc' && route.destination && isValidSolanaAddress(route.destination.trim()) ? route.destination.trim() : undefined;
+    const c = await this.compute(partner, userId, method, { destination, ownWallet: !!method && method !== 'usdc' });
     const { data: pub } = await this.supabase.partners
       .select('org_id, name, logo_url, brand_color, withdraw_min_usd, fee_fixed_usd, fee_percent_bps').eq('id', partner.id).single();
     const historyEnabled = (partner as { show_history?: boolean }).show_history !== false;
@@ -273,6 +311,7 @@ export class PartnerWithdrawService {
       gross_usdc: c.gross,
       partner_fee_usdc: c.partnerFee,
       loofta_fee_usdc: c.looftaFee,
+      setup_fee_usdc: c.setupFee,
       fees: c.feeLines,
       net_usdc: Math.max(c.net, 0),
       min_usd: Number(partner.withdraw_min_usd),
@@ -304,20 +343,21 @@ export class PartnerWithdrawService {
     const wanted: WithdrawMethod[] = opts.method ? [opts.method as WithdrawMethod] : dest ? ['usdc'] : ['token', 'bank', 'p2p'];
     if (dest && opts.method && opts.method !== 'usdc') throw new BadRequestException('A destination wallet only applies to USDC withdrawals.');
     if (!wanted.some((m) => on.includes(m))) throw new ForbiddenException('This way of withdrawing is switched off by this partner.');
-    const c = await this.compute(partner, userId, opts.method);
+    const c = await this.compute(partner, userId, opts.method, { destination: dest, ownWallet: !dest });
     if (c.reason) throw new BadRequestException(c.reason);
     if (c.partnerFee > opts.maxFeeUsdc + 1e-9) {
       throw new ConflictException('The fee changed since you last looked. Review it and confirm again.');
     }
     // The page also sends the Loofta fee it showed. If Loofta changed its rate in between, nothing is charged blind.
-    if (opts.maxLooftaFeeUsdc !== undefined && c.looftaFee > opts.maxLooftaFeeUsdc + 1e-9) {
+    if (opts.maxLooftaFeeUsdc !== undefined && c.looftaFee + c.setupFee > opts.maxLooftaFeeUsdc + 1e-9) {
       throw new ConflictException('The fee changed since you last looked. Review it and confirm again.');
     }
 
     // One stamp time for the whole withdrawal, so a retry can tell which payouts belonged to it.
     const stampedAt = new Date().toISOString();
     const shares = allocateFeeUnits(c.available.map((r) => r.units), toUnits(c.partnerFee));
-    const looftaShares = allocateFeeUnits(c.available.map((r) => r.units), toUnits(c.looftaFee));
+    // Everything that stays with Loofta's fee payer: its own fee plus the cost of creating the person's account.
+    const looftaShares = allocateFeeUnits(c.available.map((r) => r.units), toUnits(c.looftaFee) + toUnits(c.setupFee));
     const wallet = c.partnerFee > 0 ? partner.fee_wallet : null;
     const results: Array<{ payment_id: string; ok: boolean; tx?: string; error?: string }> = [];
 

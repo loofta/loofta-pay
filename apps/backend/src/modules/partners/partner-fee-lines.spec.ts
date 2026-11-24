@@ -51,13 +51,22 @@ describe('allocateLines', () => {
 });
 
 describe('publicLines', () => {
-  it('shows labels and amounts, never destinations', () => {
+  it('shows ONE Platform fee line that adds the partner fee and the Loofta fee, never a destination', () => {
     const b = buildFeeLines({ grossUnits: U(100), partnerFeeUnits: U(2), partnerWallet: W, looftaFeeUnits: U(0.1) });
     const pub = publicLines(b.lines);
-    expect(pub).toEqual([
-      { kind: 'partner', label: 'Partner fee', usdc: 2 },
-      { kind: 'loofta', label: 'Loofta fee', usdc: 0.1 },
-    ]);
+    expect(pub).toEqual([{ kind: 'platform', label: 'Platform fee', usdc: 2.1 }]);
     expect(JSON.stringify(pub)).not.toContain(W);
+    expect(JSON.stringify(pub)).not.toMatch(/loofta/i);
+  });
+
+  it('the money lines underneath stay separate', () => {
+    const b = buildFeeLines({ grossUnits: U(100), partnerFeeUnits: U(2), partnerWallet: W, looftaFeeUnits: U(0.1) });
+    expect(b.lines.map((l) => l.kind)).toEqual(['partner', 'loofta']);
+  });
+
+  it('shows only the Loofta part when the partner takes nothing, and nothing at all when there are no fees', () => {
+    const only = buildFeeLines({ grossUnits: U(100), partnerFeeUnits: BigInt(0), partnerWallet: null, looftaFeeUnits: U(0.35) });
+    expect(publicLines(only.lines)).toEqual([{ kind: 'platform', label: 'Platform fee', usdc: 0.35 }]);
+    expect(publicLines([])).toEqual([]);
   });
 });

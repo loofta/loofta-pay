@@ -88,9 +88,9 @@ export function demoQuote(opts: DemoQuery = {}, rates?: LooftaFeeRates): Withdra
     gross_usdc: prize,
     partner_fee_usdc: partnerFee,
     loofta_fee_usdc: looftaFee,
+    setup_fee_usdc: 0,
     fees: [
-      ...(partnerFee > 0 ? [{ kind: 'partner' as const, label: 'Partner fee', usdc: partnerFee }] : []),
-      { kind: 'loofta' as const, label: 'Loofta fee', usdc: looftaFee },
+      { kind: 'platform' as const, label: 'Platform fee', usdc: Math.round((partnerFee + looftaFee) * 1e6) / 1e6 },
     ],
     net_usdc: Math.round((prize - partnerFee - looftaFee) * 1e6) / 1e6,
     min_usd: partner.withdraw_min_usd,

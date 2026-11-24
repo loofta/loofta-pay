@@ -1665,6 +1665,12 @@ export class ClaimsService {
    * funding transaction against exactly what each claim expects. Refuses anything that is not a
    * partner payout of that partner, so this can never be pointed at an ordinary payment.
    */
+  /** The Solana wallet this signed-in person is paid into when they claim to their own Loofta wallet, or null if they have none yet. */
+  async recipientWalletFor(privyUserId: string): Promise<string | null> {
+    const wallet = await this.usersService.getSolanaWalletAddress(privyUserId).catch(() => null);
+    return wallet?.trim() || null;
+  }
+
   async getPartnerPayoutTargets(
     claimIds: string[],
     partnerId: string,

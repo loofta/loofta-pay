@@ -44,6 +44,8 @@ type Quote = {
   gross_usdc: number;
   partner_fee_usdc: number;
   loofta_fee_usdc: number;
+  /** One-time cost of creating the USDC account the money lands in, when it does not exist yet. 0 otherwise. */
+  setup_fee_usdc?: number;
   fees?: Array<{ kind: string; label: string; usdc: number }>;
   net_usdc: number;
   min_usd: number;
@@ -172,11 +174,13 @@ function WithdrawContent() {
       .catch(() => setError("We could not find this partner."));
   }, [orgId]);
 
-  const loadQuote = useCallback(async () => {
+  const loadQuote = useCallback(async (route?: { method: Method; destination?: string }) => {
     try {
       // Only the sample partner reads these from the link, so a demo can show any mix of routes and history.
       const demoQs = orgId === "demo" ? `?${new URLSearchParams(Object.fromEntries(["methods", "history", "name", "color", "fee", "pct", "prize", "logo"].flatMap((k) => (params.get(k) ? [[k, params.get(k)!]] : []))))}` : "";
-      setQuote(await call(`partner-withdraw/${encodeURIComponent(orgId)}/quote${demoQs}`));
+      // Once a route is chosen (and, for USDC, a wallet is typed) the quote also carries the cost of a new USDC account there.
+      const routeQs = orgId !== "demo" && route ? `?${new URLSearchParams({ route: route.method, ...(route.destination ? { destination: route.destination } : {}) }).toString()}` : "";
+      setQuote(await call(`partner-withdraw/${encodeURIComponent(orgId)}/quote${demoQs || routeQs}`));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load your payouts.");
@@ -186,6 +190,17 @@ function WithdrawContent() {
   useEffect(() => {
     if (ready && authenticated && orgId) void loadQuote();
   }, [ready, authenticated, orgId, loadQuote]);
+
+  // The person pays for the account their money lands in, so the quote must know where that is: the route they picked and, for
+  // USDC, the wallet they typed. Asked again (after a short pause while they type) so the amount shown is the amount that arrives.
+  const typedWallet = wallet.trim();
+  useEffect(() => {
+    if (!ready || !authenticated || !orgId || orgId === "demo" || !method) return;
+    const destination = method === "usdc" ? (SOLANA_ADDRESS.test(typedWallet) ? typedWallet : undefined) : undefined;
+    if (method === "usdc" && !destination) return;
+    const t = setTimeout(() => void loadQuote({ method, destination }), 400);
+    return () => clearTimeout(t);
+  }, [ready, authenticated, orgId, method, typedWallet, loadQuote]);
 
   const name = brand?.name ?? "your partner";
   const platform = PEER_PLATFORMS.find((p) => p.id === platformId) ?? null;
@@ -259,7 +274,7 @@ function WithdrawContent() {
     try {
       const out = await call(`partner-withdraw/${encodeURIComponent(orgId)}/confirm`, {
         method: "POST",
-        body: JSON.stringify({ max_fee_usdc: quote.partner_fee_usdc, max_loofta_fee_usdc: quote.loofta_fee_usdc, method, ...(method === "usdc" ? { destination_address: wallet.trim() } : {}) }),
+        body: JSON.stringify({ max_fee_usdc: quote.partner_fee_usdc, max_loofta_fee_usdc: quote.loofta_fee_usdc + (quote.setup_fee_usdc ?? 0), method, ...(method === "usdc" ? { destination_address: wallet.trim() } : {}) }),
       });
       const sent = (out.results as Array<{ ok: boolean }>).filter((r) => r.ok).length;
       const failed = out.results.length - sent;
@@ -510,13 +525,13 @@ function WithdrawContent() {
                       {method === "p2p" ? null : quote.fees && quote.fees.length > 0 ? (
                         quote.fees.map((f) => (
                           <div key={f.kind} className="flex items-center justify-between py-3">
-                            <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">{f.kind === "partner" ? `${name} fee` : f.label}</span>
+                            <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">{f.label}</span>
                             <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(f.usdc)}</span>
                           </div>
                         ))
                       ) : (
                         <div className="flex items-center justify-between py-3">
-                          <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">Fees</span>
+                          <span className="text-base text-[color:var(--pt-ink3,#8A8893)]">Platform fee</span>
                           <span className="text-base text-[color:var(--pt-ink2,#C8C6D0)]">{usd(fees)}</span>
                         </div>
                       )}

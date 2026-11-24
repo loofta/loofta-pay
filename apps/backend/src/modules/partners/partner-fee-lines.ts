@@ -20,9 +20,8 @@ export type FeeBreakdown = {
   netUnits: bigint;
 };
 
-export type PublicFeeLine = { kind: FeeKind; label: string; usdc: number };
-
-const LABEL: Record<FeeKind, string> = { partner: 'Partner fee', loofta: 'Loofta fee' };
+/** What a person sees: one "Platform fee" line. People do not know who Loofta is, so the partner's fee and Loofta's fee are shown as one. */
+export type PublicFeeLine = { kind: 'platform' | 'setup'; label: string; usdc: number };
 
 /**
  * Builds the fee lines for one withdrawal of `grossUnits`. Rejects anything that could pay out wrongly: a negative or
@@ -70,7 +69,12 @@ export function allocateLines(payoutUnits: bigint[], lines: FeeLine[]): FeeLine[
   return perPayout;
 }
 
-/** What the recipient and the portal may see: kind, a plain label and the amount. Never a destination. */
+/**
+ * What the recipient and the portal may see: ONE "Platform fee" line that adds up every fee on the withdrawal (the partner's and
+ * Loofta's), never a destination. The lines themselves stay separate everywhere money is paid; only the display is combined.
+ * No fees means no line.
+ */
 export function publicLines(lines: FeeLine[]): PublicFeeLine[] {
-  return lines.map((l) => ({ kind: l.kind, label: LABEL[l.kind], usdc: Number(l.units) / 1_000_000 }));
+  const total = lines.reduce((a, l) => a + l.units, BigInt(0));
+  return total > BigInt(0) ? [{ kind: 'platform', label: 'Platform fee', usdc: Number(total) / 1_000_000 }] : [];
 }
