@@ -11,7 +11,7 @@ import { usd, type PartnerRole } from "./usePartnerApi";
 const manrope = Manrope({ subsets: ["latin"], display: "swap", variable: "--font-partner-sans" });
 const jbMono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--font-partner-mono" });
 
-export type NavKey = "overview" | "wallet" | "payouts" | "activity" | "recipients" | "team" | "developers" | "settings" | "guide";
+export type NavKey = "overview" | "wallet" | "payouts" | "activity" | "recipients" | "kyc" | "team" | "developers" | "settings" | "guide";
 export type Org = { org_id: string; name: string; logo_url: string | null; status: string; role: PartnerRole };
 export type Counts = { batches: number; payouts: number; recipients: number; members: number };
 
@@ -29,6 +29,7 @@ const GROUPS: Array<{ label: string; items: Array<{ key: NavKey; label: string; 
       { key: "payouts", label: "Payouts", count: "batches" },
       { key: "activity", label: "Activity", count: "payouts" },
       { key: "recipients", label: "Recipients", count: "recipients" },
+      { key: "kyc", label: "KYC" },
     ],
   },
   {

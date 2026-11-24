@@ -38,6 +38,20 @@ export class PartnerWithdrawController {
     );
   }
 
+  @Post(':orgId/kyc/start')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(10, 60, 'partner-withdraw:kyc')
+  kycStart(@PrivyUser() user: { id: string }, @Param('orgId') orgId: string) {
+    return this.withdraw.kycStart(orgId, user.id);
+  }
+
+  @Post(':orgId/kyc/check')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(20, 60, 'partner-withdraw:kyc')
+  kycCheck(@PrivyUser() user: { id: string }, @Param('orgId') orgId: string) {
+    return this.withdraw.kycCheck(orgId, user.id);
+  }
+
   @Post(':orgId/confirm')
   @HttpCode(HttpStatus.OK)
   @RateLimit(5, 60, 'partner-withdraw:confirm')

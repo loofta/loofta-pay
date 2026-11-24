@@ -97,6 +97,7 @@ export function demoQuote(opts: DemoQuery = {}, rates?: LooftaFeeRates): Withdra
     p2p_min_usd: P2P_MIN_USD,
     p2p_rate_percent: P2P_RATE_PERCENT,
     can_withdraw: true,
+    kyc: null,
     reason: null,
     methods: o.methods,
     history_enabled: o.showHistory,

@@ -63,4 +63,13 @@ export class PartnerAdminService {
     await this.partners.audit(partnerId, adminUserId, `partner.${action}`, { type: 'partner', id: partnerId }, cleanNote ? { note: cleanNote } : {});
     return { id: partnerId, status: t.to };
   }
+
+  /** Identity checks are switched on by Loofta staff only, after the company asks. Not self-service. */
+  async setKyc(partnerId: string, enabled: boolean, adminUserId: string) {
+    const { data, error } = await this.supabase.partners.update({ kyc_enabled: enabled }).eq('id', partnerId).select('id');
+    if (error) throw new BadRequestException('Could not update this company.');
+    if (!data?.length) throw new NotFoundException('Company not found.');
+    await this.partners.audit(partnerId, adminUserId, enabled ? 'kyc.enabled' : 'kyc.disabled', { type: 'partner', id: partnerId });
+    return { id: partnerId, kyc_enabled: enabled };
+  }
 }

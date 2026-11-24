@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { clientApiBase } from "@/services/api/client";
+import { KycGate } from "@/components/partner/KycGate";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { manrope, sora } from "@/components/home-v4/fonts";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
@@ -54,6 +55,8 @@ type Quote = {
   p2p_rate_percent?: number;
   can_withdraw: boolean;
   reason: string | null;
+  /** Set when the partner asked this person to verify their identity and they have not passed yet. */
+  kyc?: { status: string } | null;
   /** The cash-out routes this partner leaves on. */
   methods?: Method[];
   history_enabled?: boolean;
@@ -362,6 +365,8 @@ function WithdrawContent() {
 
           {authenticated && !isDemo && !bankOpen && <LatestCashout />}
 
+          {authenticated && !bankOpen && quote?.kyc && <KycGate orgId={orgId} partnerName={name} status={quote.kyc.status} call={call} onDone={() => void loadQuote()} />}
+
           {authenticated && bankOpen && solanaWallets[0]?.address && (
             <div className="mt-6">
               <MeldFlow
@@ -402,7 +407,7 @@ function WithdrawContent() {
                 </p>
               )}
 
-              {hasPayouts && !belowMin && !method && (
+              {hasPayouts && !belowMin && !method && !quote?.kyc && (
                 <div className="mt-6 flex flex-col gap-3">
                   {groupsOn.length > 1 && (
                     <div className="grid grid-cols-2 rounded-full bg-[color:var(--pt-surface2,#0E0E12)] p-1">

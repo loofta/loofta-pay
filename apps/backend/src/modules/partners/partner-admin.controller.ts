@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { AdminGuard } from '@/common/guards';
 import { PartnerAdminService } from './partner-admin.service';
 import { PartnerFeeSettingsService } from './partner-fee-settings.service';
@@ -8,6 +8,10 @@ import { MAX_LOOFTA_FEE_BPS, MAX_LOOFTA_FEE_FLAT_USD } from './partner-fee';
 
 class ReviewDto {
   @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+
+class KycDto {
+  @IsBoolean() enabled: boolean;
 }
 
 class LooftaFeeDto {
@@ -43,6 +47,13 @@ export class PartnerAdminController {
   @ApiOperation({ summary: 'Companies by status (pending first in the admin UI)' })
   async list(@Query('status') status?: string) {
     return { partners: await this.admin.list(status) };
+  }
+
+  @Post(':id/kyc')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Switch identity checks (zkMe) on or off for one company' })
+  kyc(@Param('id', ParseUUIDPipe) id: string, @Body() dto: KycDto, @Req() req: { user: { id: string } }) {
+    return this.admin.setKyc(id, dto.enabled, req.user.id);
   }
 
   @Post(':id/approve')

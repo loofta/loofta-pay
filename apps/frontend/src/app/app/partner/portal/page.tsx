@@ -14,13 +14,14 @@ import { OverviewTab } from "@/components/partner/OverviewTab";
 import { PayoutsTab } from "@/components/partner/PayoutsTab";
 import { ActivityTab } from "@/components/partner/ActivityTab";
 import { RecipientsTab } from "@/components/partner/RecipientsTab";
+import { KycTab } from "@/components/partner/KycTab";
 import { TeamTab } from "@/components/partner/TeamTab";
 import { DevelopersTab } from "@/components/partner/DevelopersTab";
 import { SettingsTab } from "@/components/partner/SettingsTab";
 import { GuideTab } from "@/components/partner/GuideTab";
 import { ReviewStatus } from "@/components/partner/ReviewStatus";
 
-/** Shown while the sign-in state and your companies load: a soft pulse and card skeletons instead of the word "Loading". */
+/** Shown while the sign-in state and your companies load: a soft pulse instead of the word "Loading". */
 function PortalLoading() {
   return (
     <div className="mx-auto flex w-full max-w-[560px] flex-col items-center pt-[clamp(24px,10vh,120px)] text-center" role="status" aria-live="polite">
@@ -32,11 +33,6 @@ function PortalLoading() {
       </div>
       <p className="mt-6 text-[17px] font-medium text-[color:var(--pt-ink,#EDEDEF)]">Opening your partner portal</p>
       <p className="mt-1 text-[15px] text-[color:var(--pt-ink3,#9C9CA5)]">One moment.</p>
-      <div className="mt-10 grid w-full grid-cols-3 gap-3 opacity-70" aria-hidden>
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="h-[88px] animate-pulse rounded-2xl border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)]" style={{ animationDelay: `${i * 150}ms` }} />
-        ))}
-      </div>
     </div>
   );
 }
@@ -251,6 +247,7 @@ function PartnerContent() {
             {tab === "payouts" && <PayoutsTab orgId={current.org_id} myRole={current.role} myUserId={userId} treasury={treasury} goWallet={() => setTab("wallet")} openBatchId={openBatchId} />}
             {tab === "activity" && <ActivityTab orgId={current.org_id} />}
             {tab === "recipients" && <RecipientsTab orgId={current.org_id} myRole={current.role} />}
+            {tab === "kyc" && <KycTab orgId={current.org_id} myRole={current.role} />}
             {tab === "team" && <TeamTab orgId={current.org_id} myRole={current.role} myUserId={userId} />}
             {tab === "developers" && <DevelopersTab orgId={current.org_id} myRole={current.role} />}
             {tab === "settings" && <SettingsTab orgId={current.org_id} />}

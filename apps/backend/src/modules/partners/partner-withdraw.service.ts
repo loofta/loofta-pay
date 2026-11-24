@@ -12,6 +12,7 @@ import { isValidSolanaAddress } from '@/common/solana-address';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { ATA_RENT_LAMPORTS } from '@/common/ata-rent-recovery';
+import { PartnerKycService } from './partner-kyc.service';
 import { PartnersService, Partner, PublicPartner } from './partners.service';
 import { allocateFeeUnits, computeLooftaWithdrawFeeUsdc, computePartnerFeeUsdc, P2P_MIN_USD, P2P_RATE_PERCENT } from './partner-fee';
 import { PartnerFeeSettingsService } from './partner-fee-settings.service';
@@ -59,6 +60,8 @@ export interface WithdrawQuote {
   p2p_rate_percent: number;
   can_withdraw: boolean;
   reason: string | null;
+  /** Set when this partner asked the person to verify their identity and they have not passed yet. */
+  kyc: { status: string } | null;
   /** Routes this partner leaves on, in display order. */
   methods: WithdrawMethod[];
   /** False when the partner hides history; `history` is then always empty. */
@@ -84,6 +87,7 @@ export class PartnerWithdrawService {
     private readonly feeSettings: PartnerFeeSettingsService,
     // Explicit token: a `Type | null` parameter is emitted as `Object`, which Nest cannot resolve, and Optional would silently give null.
     @Optional() @Inject(LightCompressionService) private readonly light: LightCompressionService | null = null,
+    @Optional() private readonly kyc?: PartnerKycService,
   ) {}
 
   private get isDevnet() {
@@ -106,9 +110,9 @@ export class PartnerWithdrawService {
   }
 
   /** The payouts this logged-in user may withdraw from this partner: identity-checked, and funded on-chain. */
-  private async findPayouts(partner: Partner, userId: string): Promise<{ rows: Array<PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }> }> {
+  private async findPayouts(partner: Partner, userId: string): Promise<{ rows: Array<PayoutView & { units: bigint; registered: boolean; stampedAt: string | null; email: string | null }> }> {
     const { data, error } = await this.supabase.payments
-      .select('id, amount, description, created_at, burner_address, recipient_user_id, is_devnet, partner_fee_stamped_at')
+      .select('id, amount, description, created_at, burner_address, recipient_user_id, is_devnet, partner_fee_stamped_at, recipient_email')
       .eq('partner_id', partner.id)
       .is('partner_withdrawn_at', null)
       .not('burner_address', 'is', null)
@@ -134,7 +138,7 @@ export class PartnerWithdrawService {
       }
       for (const r of flagged ?? []) if ((r as { burner_compressed?: boolean | null }).burner_compressed === true) compressedIds.add(r.id as string);
     }
-    const rows: Array<PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }> = [];
+    const rows: Array<PayoutView & { units: bigint; registered: boolean; stampedAt: string | null; email: string | null }> = [];
     for (const p of data ?? []) {
       if ((p.is_devnet === true) !== this.isDevnet) continue;
       // Identity comes from the verified login, checked against who the payout was sent to.
@@ -158,6 +162,7 @@ export class PartnerWithdrawService {
         payment_id: p.id, amount: Number(p.amount), message: p.description ?? null, created_at: p.created_at, funded, units,
         registered: Boolean(p.recipient_user_id),
         stampedAt: (p as { partner_fee_stamped_at?: string | null }).partner_fee_stamped_at ?? null,
+        email: (p as { recipient_email?: string | null }).recipient_email ?? null,
       });
     }
     return { rows };
@@ -224,8 +229,11 @@ export class PartnerWithdrawService {
     }
     if (setupFee > 0) feeLines.push({ kind: 'setup', label: 'New wallet account (one time)', usdc: setupFee });
 
+    // A person the partner asked to verify cannot withdraw until they pass. Checked first so they see what to do, not a fee message.
+    const kycBlock = available.length ? await this.kyc?.blockingFor(partner as unknown as { id: string; org_id: string; name: string; kyc_enabled?: boolean }, rows.map((r) => r.email ?? '')) ?? null : null;
     let reason: string | null = null;
-    if (!available.length) reason = processing.length ? 'Your payout is still being processed.' : 'Nothing to withdraw yet.';
+    if (kycBlock) reason = kycBlock.status === 'failed' ? 'Your identity check did not pass. Ask the company that paid you to review it.' : 'Verify your identity to withdraw.';
+    else if (!available.length) reason = processing.length ? 'Your payout is still being processed.' : 'Nothing to withdraw yet.';
     else if (gross < Number(partner.withdraw_min_usd)) reason = `The minimum withdrawal is $${Number(partner.withdraw_min_usd).toFixed(2)}.`;
     else if (method === 'p2p' && gross < P2P_MIN_USD) reason = `P2P cash-outs start at $${P2P_MIN_USD.toFixed(2)}.`;
     else if (net <= 0) reason = 'This amount is too small to withdraw after fees.';
@@ -240,9 +248,9 @@ export class PartnerWithdrawService {
       }
     }
 
-    const strip = ({ units: _u, registered: _r, stampedAt: _s, ...v }: PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }): PayoutView => v;
+    const strip = ({ units: _u, registered: _r, stampedAt: _s, email: _e, ...v }: PayoutView & { units: bigint; registered: boolean; stampedAt: string | null; email: string | null }): PayoutView => v;
     return {
-      available, processing: processing.map(strip), partnerFee, looftaFee, setupFee, gross, net, reason, feeLines,
+      available, processing: processing.map(strip), partnerFee, looftaFee, setupFee, gross, net, reason, feeLines, kyc: kycBlock,
       view: available.map(strip),
     };
   }
@@ -290,6 +298,25 @@ export class PartnerWithdrawService {
     }));
   }
 
+  private async kycEmails(partner: Partner, userId: string): Promise<string[]> {
+    const { rows } = await this.findPayouts(partner, userId);
+    return rows.map((r) => r.email ?? '').filter(Boolean);
+  }
+
+  /** Starts the identity check for the signed-in recipient. Only works for an address they were proven to own. */
+  async kycStart(orgId: string, userId: string) {
+    if (!this.kyc || orgId === DEMO_ORG_ID) throw new BadRequestException('No identity check is waiting for you.');
+    const partner = await this.loadPartner(orgId);
+    return this.kyc.startForRecipient(partner as never, await this.kycEmails(partner, userId));
+  }
+
+  /** The recipient finished the check: ask zkMe and update. */
+  async kycCheck(orgId: string, userId: string) {
+    if (!this.kyc || orgId === DEMO_ORG_ID) throw new BadRequestException('No identity check is waiting for you.');
+    const partner = await this.loadPartner(orgId);
+    return this.kyc.checkForRecipient(partner as never, await this.kycEmails(partner, userId));
+  }
+
   async quote(orgId: string, userId: string, demo?: DemoQuery, route: { method?: string; destination?: string } = {}): Promise<WithdrawQuote> {
     if (orgId === DEMO_ORG_ID) return demoQuote(demo, await this.feeSettings.get());
     const partner = await this.loadPartner(orgId);
@@ -319,6 +346,7 @@ export class PartnerWithdrawService {
       p2p_rate_percent: P2P_RATE_PERCENT,
       can_withdraw: c.reason === null,
       reason: c.reason,
+      kyc: c.kyc,
     };
   }
 

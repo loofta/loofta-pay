@@ -434,6 +434,28 @@ export class EmailService {
     }
   }
 
+  /** Tells a recipient their payer wants them to verify their identity before they can withdraw. */
+  async sendPartnerKycRequestEmail(data: { recipientEmail: string; partnerName: string; url: string }): Promise<boolean> {
+    if (!this.resend) return false;
+    const name = escapeHtml(data.partnerName);
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Verify your identity</title></head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;"><tr><td align="center">
+<table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;border:1px solid #2a2a30;"><tr><td style="padding:32px 40px;color:#d1d5db;font-size:15px;line-height:1.7;">
+<p style="margin:0 0 12px;font-size:20px;font-weight:600;color:#ffffff;">Verify your identity to withdraw</p>
+<p style="margin:0 0 16px;">${name} asks you to verify who you are before you withdraw money they send you. It takes a few minutes, and you share proof that you passed, not your documents.</p>
+<p style="margin:0 0 24px;">Sign in with this email address, then follow the steps on the withdraw page. Your money stays safe and is waiting for you.</p>
+<div style="text-align:center;"><a href="${escapeHtml(data.url)}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;">Verify and withdraw</a></div>
+</td></tr></table></td></tr></table></body></html>`;
+    try {
+      await this.resend.emails.send({ from: 'Loofta <hello@loofta.xyz>', to: data.recipientEmail, subject: `${data.partnerName} asks you to verify your identity`, html });
+      return true;
+    } catch (err: any) {
+      this.logger.error(`Failed to send KYC request email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      return false;
+    }
+  }
+
   /** Sent when an admin grants a free Mystery Pack spin — a notification, not a claim link (the
    *  spin already shows up in-app the next time the recipient opens the Mystery Pack page, see
    *  PackService.hasFreeSpin), so the CTA just points straight at the pack page itself. */

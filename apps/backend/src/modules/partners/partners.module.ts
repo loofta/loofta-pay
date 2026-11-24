@@ -19,6 +19,9 @@ import { PartnerGroupsService } from './partner-groups.service';
 import { PartnerGroupsController } from './partner-groups.controller';
 import { PayoutVaultService } from './payout-vault.service';
 import { PayoutVaultController } from './payout-vault.controller';
+import { ZkmeService } from './zkme.service';
+import { PartnerKycService } from './partner-kyc.service';
+import { PartnerKycController } from './partner-kyc.controller';
 import { PartnerAdminService } from './partner-admin.service';
 import { PartnerFeeSettingsService } from './partner-fee-settings.service';
 import { PartnerAdminController } from './partner-admin.controller';
@@ -27,8 +30,8 @@ import { PartnerPortalTokenController, PortalController, PortalGuard } from './p
 
 @Module({
   imports: [UsersModule, ClaimsModule, IntegratorsModule, EmailModule, PayoutsModule],
-  controllers: [PartnersController, PartnerGroupsController, PartnerBatchesController, PartnerTreasuryController, PartnerWithdrawController, PayoutVaultController, PartnerPortalTokenController, PortalController, PartnerApiController, PartnerAdminController],
-  providers: [PartnerFeeSettingsService, PartnerAdminService, PartnersService, PartnerGroupsService, PartnerWithdrawService, PartnerPayoutsService, PartnerTreasuryService, PartnerCompressionService, PayoutVaultService, PartnerKeysService, PortalTokenService, PortalGuard],
+  controllers: [PartnersController, PartnerGroupsController, PartnerKycController, PartnerBatchesController, PartnerTreasuryController, PartnerWithdrawController, PayoutVaultController, PartnerPortalTokenController, PortalController, PartnerApiController, PartnerAdminController],
+  providers: [ZkmeService, PartnerKycService, PartnerFeeSettingsService, PartnerAdminService, PartnersService, PartnerGroupsService, PartnerWithdrawService, PartnerPayoutsService, PartnerTreasuryService, PartnerCompressionService, PayoutVaultService, PartnerKeysService, PortalTokenService, PortalGuard],
   exports: [PartnersService],
 })
 export class PartnersModule {}
