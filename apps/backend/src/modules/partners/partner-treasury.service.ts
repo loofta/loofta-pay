@@ -20,13 +20,13 @@ import { UsersService } from '@/modules/users/users.service';
 import { ClaimsService } from '@/modules/claims/claims.service';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
-import { ATA_RENT_LAMPORTS } from '@/common/ata-rent-recovery';
+import { ATA_RENT_LAMPORTS, quoteAtaRentRecoveryUsdc } from '@/common/ata-rent-recovery';
 import { COMPRESS_PER_TX, compressedPayoutsEnabledFor } from '@/common/light-compression.service';
 import { updateInChunks } from '@/common/in-chunks';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { PartnersService, Partner } from './partners.service';
 import { PartnerRole, can } from './partner-roles';
-import { ProposeTreasuryConfigDto } from './dto/partner-treasury.dto';
+import { ProposeTreasuryConfigDto, ProposeTreasuryWithdrawDto } from './dto/partner-treasury.dto';
 
 const { Permission, Permissions } = multisig.types;
 const MAX_TX_BYTES = 1232;
@@ -39,7 +39,7 @@ type MemberRow = { id: string; user_id: string | null; email: string | null; rol
 type ProposalRow = {
   id: string;
   partner_id: string;
-  kind: 'payout' | 'config';
+  kind: 'payout' | 'config' | 'withdraw';
   batch_id: string | null;
   chunk_index: number | null;
   transaction_index: number | string;
@@ -353,6 +353,8 @@ export class PartnerTreasuryService {
       vault: partner.treasury_vault,
       threshold: ms.threshold,
       usdc,
+      // What a withdrawal costs in network fees (USDC), so the portal can offer "withdraw everything".
+      withdraw_fee_usdc: (await this.feeUnits(ms.threshold + 1)) / 1e6,
       my_wallet: wallet,
       am_member: onchain.some((m) => m.is_me),
       members: onchain,
@@ -615,6 +617,105 @@ export class PartnerTreasuryService {
 
     if (!result) throw new ConflictException('Another proposal is being created. Try again in a moment.');
     await this.partners.audit(partner.id, userId, 'treasury.config_proposed', { type: 'treasury_proposal', id: result.proposal_id });
+    return result;
+  }
+
+  // ---------------------------------------------------------------- withdrawals
+
+  /** Network fees for a proposal of this many transactions, in USDC base units (two signatures each, doubled for headroom). Never free, even when the price feed is down. */
+  private async feeUnits(txCount: number): Promise<number> {
+    const feeLamports = txCount * 20_000;
+    const solPrice = await fetchSolPriceUsd().catch(() => null);
+    return Math.max(1, Math.ceil(solPrice && solPrice > 0 ? (feeLamports / 1e9) * solPrice * 1_000_000 : feeLamports));
+  }
+
+  /**
+   * Propose moving USDC out of the company wallet to an address the owner chooses. It needs the same approvals as any
+   * other proposal, and only an owner can start one. The transfer is fixed here: the amount to the destination, plus the
+   * network fee (and the rent of a new token account, if the destination has none) paid to our fee payer in USDC, so
+   * Loofta never pays for it. Loofta cannot move this money, the signers do.
+   */
+  async proposeWithdraw(orgId: string, userId: string, dto: ProposeTreasuryWithdrawDto): Promise<UnsignedTx> {
+    const { partner } = await this.partners.requireMembership(orgId, userId, 'treasury.manage');
+    let destination: PublicKey;
+    try {
+      destination = new PublicKey(dto.destination_address.trim());
+    } catch {
+      throw new BadRequestException('That is not a valid Solana address.');
+    }
+    // A wallet address only: not a token account or a program, where the money could be stuck for good.
+    if (!PublicKey.isOnCurve(destination.toBytes())) throw new BadRequestException('Enter a normal Solana wallet address, not a token account or a program.');
+    const amountUnits = Math.round(dto.amount_usdc * 1_000_000);
+    if (!Number.isFinite(amountUnits) || amountUnits < 10_000) throw new BadRequestException('The smallest withdrawal is 0.01 USDC.');
+
+    const conn = this.conn();
+    const { msPda, vault } = this.chainOf(partner);
+    const sponsorKp = this.sponsorKeypair();
+    const mint = this.usdcMint();
+    if (destination.equals(vault) || destination.equals(sponsorKp.publicKey)) throw new BadRequestException('Choose a different address to withdraw to.');
+
+    const result = await this.redis.withLock(`partner-treasury-index:${partner.id}`, async () => {
+      const ms = await this.fetchMultisig(conn, msPda);
+      const creator = await this.requireSigner(userId, ms, Permission.Initiate);
+      const creatorCanVote = has(ms.members.find((m) => m.key.equals(creator))!.permissions.mask, Permission.Vote);
+      if ((await this.openProposalCount(partner.id)) >= MAX_OPEN_PROPOSALS) throw new ConflictException('Too many open proposals. Approve or let some expire first.');
+
+      const vaultAta = await getAssociatedTokenAddress(mint, vault, true);
+      const sponsorAta = await getAssociatedTokenAddress(mint, sponsorKp.publicKey);
+      const destAta = await getAssociatedTokenAddress(mint, destination, false);
+      const destInfo = await conn.getAccountInfo(destAta, 'confirmed');
+      const rent = await quoteAtaRentRecoveryUsdc(destInfo ? 0 : 1);
+      const gasUnits = await this.feeUnits(ms.threshold + 1);
+      const feeTotal = gasUnits + rent.totalUsdcUnits;
+
+      const balance = await conn.getTokenAccountBalance(vaultAta, 'confirmed').then((r) => Number(r.value.amount)).catch(() => 0);
+      if (balance < amountUnits + feeTotal) {
+        const usdc = (n: number) => (n / 1e6).toFixed(n % 10_000 === 0 ? 2 : 4);
+        const most = Math.max(0, balance - feeTotal);
+        throw new BadRequestException(
+          `The company wallet has ${usdc(balance)} USDC. A withdrawal also needs ${usdc(feeTotal)} for network fees${rent.totalUsdcUnits ? ' and to open a token account for that address' : ''}. You can withdraw up to ${usdc(most)} USDC.`,
+        );
+      }
+
+      // Our fee payer advances SOL for the proposal accounts and, when needed, the destination's token account. Be plain about it if it is low.
+      const neededLamports = (destInfo ? 0 : ATA_RENT_LAMPORTS) + 6_000_000;
+      const sponsorLamports = await conn.getBalance(sponsorKp.publicKey, 'confirmed');
+      if (sponsorLamports < neededLamports) {
+        this.logger.error(`Loofta fee payer is low on SOL: ${sponsorLamports / 1e9} SOL, a withdrawal needs about ${neededLamports / 1e9}. Top it up.`);
+        throw new ServiceUnavailableException('Withdrawals are temporarily unavailable. Please try again in a little while.');
+      }
+      // Created by our fee payer, outside the vault transaction (the vault holds no SOL). Its rent is charged back in USDC above.
+      await this.ensureTokenAccounts(conn, mint, [sponsorKp.publicKey, destination]);
+
+      const transactionIndex = await this.claimIndex(partner.id, conn, msPda);
+      const proposalId = await this.insertProposal({
+        partner_id: partner.id,
+        kind: 'withdraw',
+        batch_id: null,
+        chunk_index: null,
+        transaction_index: transactionIndex.toString(),
+        payment_ids: [],
+        summary: { destination: destination.toBase58(), amount_usdc: amountUnits / 1e6, fee_usdc: feeTotal / 1e6 },
+        created_by_user_id: userId,
+      });
+      const transactionMessage = new TransactionMessage({
+        payerKey: vault,
+        recentBlockhash: PLACEHOLDER_BLOCKHASH,
+        instructions: [
+          createTransferInstruction(vaultAta, destAta, vault, amountUnits, [], TOKEN_PROGRAM_ID),
+          createTransferInstruction(vaultAta, sponsorAta, vault, feeTotal, [], TOKEN_PROGRAM_ID),
+        ],
+      });
+      const ixs = [
+        multisig.instructions.vaultTransactionCreate({ multisigPda: msPda, transactionIndex, creator, rentPayer: sponsorKp.publicKey, vaultIndex: 0, ephemeralSigners: 0, transactionMessage }),
+        multisig.instructions.proposalCreate({ multisigPda: msPda, transactionIndex, creator, rentPayer: sponsorKp.publicKey }),
+        ...(creatorCanVote ? [multisig.instructions.proposalApprove({ multisigPda: msPda, transactionIndex, member: creator })] : []),
+      ];
+      return { proposal_id: proposalId, unsigned_transaction: await this.buildTx(ixs), transaction_version: 'v0' as const };
+    }, 60_000);
+
+    if (!result) throw new ConflictException('Another proposal is being created. Try again in a moment.');
+    await this.partners.audit(partner.id, userId, 'treasury.withdraw_proposed', { type: 'treasury_proposal', id: result.proposal_id }, { destination: destination.toBase58(), amount_usdc: amountUnits / 1e6 });
     return result;
   }
 

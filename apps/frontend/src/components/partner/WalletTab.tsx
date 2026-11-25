@@ -18,6 +18,7 @@ const STATUS: Record<TreasuryProposal["status"], { label: string; tone: "grey" |
 };
 
 function describe(p: TreasuryProposal): string {
+  if (p.kind === "withdraw") return `Withdraw ${usd(p.summary.amount_usdc ?? 0)} to ${short(p.summary.destination ?? "")}, plus ${usd(p.summary.fee_usdc ?? 0)} network fees`;
   if (p.kind === "payout") return `Pay ${p.summary.payouts ?? 0} people, ${usd(p.summary.total_usdc)} plus ${usd(p.summary.gas_usdc)} network fees${p.summary.label ? ` · ${p.summary.label}` : ""}`;
   const parts = (p.summary.actions ?? []).map((a) =>
     a.type === "add_member" ? `Add ${a.name ?? short(a.wallet)}` : a.type === "remove_member" ? `Remove ${a.name ?? short(a.wallet)}` : `Require ${a.role} approvals`,
@@ -85,7 +86,7 @@ export function ProposalsPanel({ treasury, onDone, only }: { treasury: Treasury;
             )}
             {p.can_execute && (
               <Btn disabled={busy !== null} onClick={() => void run(p, "execute")}>
-                {busy === p.id + "execute" ? "Running..." : p.kind === "payout" ? "Send the payouts" : "Apply the change"}
+                {busy === p.id + "execute" ? "Running..." : p.kind === "payout" ? "Send the payouts" : p.kind === "withdraw" ? "Send the withdrawal" : "Apply the change"}
               </Btn>
             )}
           </div>
@@ -102,6 +103,8 @@ export function WalletTab({ orgId, myRole, treasury }: { orgId: string; myRole: 
   const [ok, setOk] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [threshold, setThreshold] = useState<number | null>(null);
+  const [wdAddress, setWdAddress] = useState("");
+  const [wdAmount, setWdAmount] = useState("");
   const s = treasury.state;
   const isOwner = myRole === "owner";
   const canManage = myRole === "owner" || myRole === "admin";
@@ -200,6 +203,50 @@ export function WalletTab({ orgId, myRole, treasury }: { orgId: string; myRole: 
               </Btn>
             </div>
           </Section>
+
+          {isOwner && (
+            <Section title="Withdraw" desc="Move USDC out of the company wallet to any Solana wallet. It needs the same approvals as a payout, and network fees are taken from the wallet in USDC.">
+              <div className="flex flex-col gap-3">
+                <input
+                  value={wdAddress}
+                  onChange={(e) => setWdAddress(e.target.value)}
+                  placeholder="Solana wallet address"
+                  spellCheck={false}
+                  className="h-12 w-full rounded-[12px] border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)] px-4 font-mono text-[15px] text-[color:var(--pt-ink,#EDEDEF)] outline-none placeholder:text-[color:var(--pt-ink3,#9C9CA5)]"
+                />
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    value={wdAmount}
+                    onChange={(e) => setWdAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                    placeholder="Amount in USDC"
+                    inputMode="decimal"
+                    className="h-12 w-56 rounded-[12px] border border-[color:var(--pt-w0p08,rgba(255,255,255,0.08))] bg-[color:var(--pt-surface,#121214)] px-4 text-[15px] text-[color:var(--pt-ink,#EDEDEF)] outline-none placeholder:text-[color:var(--pt-ink3,#9C9CA5)]"
+                  />
+                  <Btn kind="ghost" onClick={() => setWdAmount(String(Math.max(0, Math.floor((s.usdc - s.withdraw_fee_usdc) * 100) / 100)))}>
+                    Max
+                  </Btn>
+                  <span className="text-[14px] text-[color:var(--pt-ink3,#9C9CA5)]">
+                    Balance {usd(s.usdc)}. Network fees about {usd(s.withdraw_fee_usdc)}, more if that address has no USDC account yet.
+                  </span>
+                </div>
+                <div className="flex justify-end">
+                  <Btn
+                    disabled={busy !== null || !s.am_member || !wdAddress.trim() || !(Number(wdAmount) > 0)}
+                    onClick={() =>
+                      void guard("withdraw", async () => {
+                        await treasury.act("withdraw", { destination_address: wdAddress.trim(), amount_usdc: Number(wdAmount) });
+                        setWdAddress("");
+                        setWdAmount("");
+                        setOk("Withdrawal proposed. It is sent once enough signers have approved it.");
+                      })
+                    }
+                  >
+                    {busy === "withdraw" ? "Proposing..." : "Propose withdrawal"}
+                  </Btn>
+                </div>
+              </div>
+            </Section>
+          )}
 
           <Section title="Signers" desc="People whose own Loofta wallet can approve. A payer can propose payouts but not approve them.">
             <Table cols={["Signer", "Wallet", "Can", ""]} template="minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 110px">

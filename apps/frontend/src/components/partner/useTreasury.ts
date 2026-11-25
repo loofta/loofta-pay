@@ -20,7 +20,7 @@ export type TreasuryMember = {
 };
 export type TreasuryProposal = {
   id: string;
-  kind: "payout" | "config";
+  kind: "payout" | "config" | "withdraw";
   batch_id: string | null;
   chunk_index: number | null;
   transaction_index: number;
@@ -30,6 +30,9 @@ export type TreasuryProposal = {
     payouts?: number;
     total_usdc?: number;
     gas_usdc?: number;
+    destination?: string;
+    amount_usdc?: number;
+    fee_usdc?: number;
     threshold_after?: number;
     actions?: Array<{ type: string; name: string | null; role: string; wallet: string }>;
   };
@@ -49,6 +52,7 @@ export type TreasuryState =
       vault: string;
       threshold: number;
       usdc: number;
+      withdraw_fee_usdc: number;
       my_wallet: string | null;
       am_member: boolean;
       members: TreasuryMember[];

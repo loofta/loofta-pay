@@ -180,7 +180,7 @@ export function PartnerShell({
             Support
           </a>
           {!authReady ? null : signedIn ? (
-            <UserMenu username={username} email={email} isDarkPage={false} onLogout={onLogout} />
+            <UserMenu username={username} email={email} isDarkPage={false} onLogout={onLogout} compact />
           ) : (
             <button type="button" onClick={onSignIn} className="rounded-full bg-white px-4 py-1.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_0_0_1px_rgba(0,0,0,0.06)] transition hover:bg-[#F2F2F4]">
               Sign in

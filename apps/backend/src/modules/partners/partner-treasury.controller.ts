@@ -4,7 +4,7 @@ import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { PartnerTreasuryService } from './partner-treasury.service';
-import { ConfirmTreasuryTxDto, ProposeTreasuryConfigDto } from './dto/partner-treasury.dto';
+import { ConfirmTreasuryTxDto, ProposeTreasuryConfigDto, ProposeTreasuryWithdrawDto } from './dto/partner-treasury.dto';
 
 type Caller = { id: string };
 
@@ -39,6 +39,13 @@ export class PartnerTreasuryController {
   @RateLimit(10, 60, 'partners:treasury-config')
   propose(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Body() dto: ProposeTreasuryConfigDto) {
     return this.treasury.proposeConfig(orgId, user.id, dto);
+  }
+
+  @Post('withdraw')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(5, 300, 'partners:treasury-withdraw')
+  withdraw(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Body() dto: ProposeTreasuryWithdrawDto) {
+    return this.treasury.proposeWithdraw(orgId, user.id, dto);
   }
 
   @Post('batches/:batchId/proposal')

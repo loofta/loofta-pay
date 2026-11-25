@@ -184,9 +184,11 @@ interface UserMenuProps {
   email: string | undefined;
   isDarkPage: boolean;
   onLogout: () => void;
+  /** Business view (the partner portal): only the email, the Loofta wallet and sign out. No status, share link, username or portfolio. */
+  compact?: boolean;
 }
 
-export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage, onLogout }: UserMenuProps) {
+export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage, onLogout, compact = false }: UserMenuProps) {
   const t = useTranslations('UserMenu');
   // Get email and username from store as fallback (always persistent)
   const storeEmail = useAuthStore((s) => s.email);
@@ -898,7 +900,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             {/* User Info Section */}
             <div className={`px-3 py-2 rounded-lg mb-1 ${isDarkPage ? "bg-white/[0.05]" : "bg-gray-50"
               }`}>
-              {username && (
+              {username && !compact && (
                 <div className="mb-2">
                   <p className={`text-base md:text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
                     }`}>
@@ -949,7 +951,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               )}
 
               {/* Tier badge */}
-              <TierBadge volumeUsd={totalVolumeUsd} dark={isDarkPage} />
+              {!compact && <TierBadge volumeUsd={totalVolumeUsd} dark={isDarkPage} />}
 
             </div>
 
@@ -958,7 +960,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               }`}></div>
 
             {/* Share Payment Link Section */}
-            {username && (
+            {username && !compact && (
               <div className="mb-2">
                 <button
                   onClick={() => {
@@ -1003,13 +1005,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   : "text-gray-700 hover:bg-gray-100"
                   }`}
               >
-                <Settings className="w-4 h-4 shrink-0" />
-                {t('settings')}
+                {compact ? <WalletIcon className="w-4 h-4 shrink-0" /> : <Settings className="w-4 h-4 shrink-0" />}
+                {compact ? "Loofta wallet" : t('settings')}
               </button>
             </div>
 
 {/* Wallet - tokens, send, receive, swap and history */}
-            <div className="mb-1">
+            {!compact && <div className="mb-1">
               <Link
                 href="/app/portfolio"
                 onClick={() => setIsOpen(false)}
@@ -1021,10 +1023,10 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 <WalletIcon className="w-4 h-4 shrink-0" />
                 Portfolio
               </Link>
-            </div>
+            </div>}
 
             {/* Divider */}
-            {username && (
+            {(username || compact) && (
               <div className={`h-px my-2 ${isDarkPage ? "bg-white/[0.07]" : "bg-gray-200"
                 }`}></div>
             )}
