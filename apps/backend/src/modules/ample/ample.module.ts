@@ -11,10 +11,11 @@ import { AmpleCompanionService } from './ample-companion.service';
 import { IntentsModule } from '@/modules/intents/intents.module';
 import { SendPaymentModule } from '@/modules/send-payment/send-payment.module';
 import { AmpleService } from './ample.service';
+import { AmplePackService } from './ample-pack.service';
 
 @Module({
   imports: [UsersModule, ClaimsModule, LotteryModule, SendPaymentModule, IntentsModule],
   controllers: [AmpleController, AmpleAdminController, AmpleEvmController],
-  providers: [AmpleService, AmpleEvmService, AmpleFundService, AmpleCompanionService],
+  providers: [AmpleService, AmplePackService, AmpleEvmService, AmpleFundService, AmpleCompanionService],
 })
 export class AmpleModule {}

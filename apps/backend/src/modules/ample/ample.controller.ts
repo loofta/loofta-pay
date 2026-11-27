@@ -5,6 +5,7 @@ import { Public } from '@/common/guards/auth.guard';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { UsersService } from '@/modules/users/users.service';
 import { AmpleService } from './ample.service';
+import { AmplePackService } from './ample-pack.service';
 import { AmpleAmountDto, AmpleChallengeDto, AmpleClaimDto, AmpleEventDto, AmpleLinkDto } from './dto/ample.dto';
 
 @ApiTags('ample')
@@ -15,6 +16,7 @@ export class AmpleController {
   constructor(
     private readonly ample: AmpleService,
     private readonly users: UsersService,
+    private readonly packs: AmplePackService,
   ) {}
 
   /** The wallet being linked must be one of the caller's own, or anyone could attach a stranger's wallet to their account. */
@@ -65,6 +67,20 @@ export class AmpleController {
   async link(@Req() req: any, @Body() dto: AmpleLinkDto) {
     await this.assertOwnWallet(req.user!.id, dto.walletAddress);
     return this.ample.link(req.user!.id, dto.walletAddress, dto.message, dto.signature);
+  }
+
+  @Get('pack')
+  @RateLimit(30, 60, 'ample:pack')
+  @ApiOperation({ summary: 'The free Ample pack earned by the first confirmed payment (issued on first call)' })
+  pack(@Req() req: any) {
+    return this.packs.myPack(req.user!.id);
+  }
+
+  @Post('pack/:packId/open')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(10, 60, 'ample:pack-open')
+  openPack(@Req() req: any, @Param('packId') packId: string) {
+    return this.packs.openPack(req.user!.id, packId.slice(0, 120));
   }
 
   @Get('overview')

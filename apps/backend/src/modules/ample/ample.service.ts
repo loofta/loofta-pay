@@ -29,7 +29,7 @@ export function drawDetails(r: any): Pick<DrawInfo, 'estimatedPayoutPoolUsd' | '
   };
 }
 
-export type Tier = { kind: 'key' } | { kind: 'session'; userId: string };
+export type Tier = { kind: 'key' } | { kind: 'session'; userId: string; scopes?: string[] };
 
 interface CachedSession {
   token: string;
@@ -77,7 +77,7 @@ export class AmpleService {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined) qs.set(k, v);
     const url = `${BASE}${path}${qs.toString() ? `?${qs}` : ''}`;
-    const bearer = tier.kind === 'key' ? this.apiKey : (await this.getSession(tier.userId)).token;
+    const bearer = tier.kind === 'key' ? this.apiKey : (await this.getSession(tier.userId, tier.scopes)).token;
 
     let res: Response;
     try {
@@ -98,7 +98,7 @@ export class AmpleService {
     const code: string = json?.error?.code ?? 'AMPLE_UNKNOWN';
     // Expired or revoked session: mint once more and retry once (per Ample's retry policy).
     if (tier.kind === 'session' && code === 'AMPLE_AUTH_TOKEN_EXPIRED' && !retriedAuth) {
-      this.sessions.delete(tier.userId);
+      this.forgetSession(tier.userId);
       return this.call<T>(method, path, tier, opts, true);
     }
     this.logger.warn(`Ample ${method} ${path} -> ${res.status} ${code} (${json?.error?.requestId ?? 'no-req-id'})`);
@@ -106,15 +106,17 @@ export class AmpleService {
   }
 
   /** One cached JWT per user, reused until 30s before expiry. Asks for `tx` and falls back to read-only if not approved. */
-  private async getSession(userId: string): Promise<CachedSession> {
-    const hit = this.sessions.get(userId);
+  private async getSession(userId: string, explicitScopes?: string[]): Promise<CachedSession> {
+    // An explicit scope list (e.g. ['read','packs']) is cached on its own and never falls back to the tx logic.
+    const cacheKey = explicitScopes ? `${userId}|${explicitScopes.join(',')}` : userId;
+    const hit = this.sessions.get(cacheKey);
     if (hit && hit.expiresAtMs - Date.now() > 30_000) return hit;
-    const scopes = this.txScopeDenied ? ['read'] : ['read', 'tx'];
+    const scopes = explicitScopes ?? (this.txScopeDenied ? ['read'] : ['read', 'tx']);
     let minted: any;
     try {
       minted = await this.call('POST', '/sessions', { kind: 'key' }, { body: { partnerUserId: userId, scopes } });
     } catch (e: any) {
-      if (!this.txScopeDenied && e?.response?.code === 'AMPLE_SCOPE_NOT_PERMITTED') {
+      if (!explicitScopes && !this.txScopeDenied && e?.response?.code === 'AMPLE_SCOPE_NOT_PERMITTED') {
         this.txScopeDenied = true;
         this.logger.warn('Ample: partner not approved for the tx scope yet, running read-only');
         return this.getSession(userId);
@@ -122,7 +124,7 @@ export class AmpleService {
       throw e;
     }
     const s: CachedSession = { token: minted.token, expiresAtMs: new Date(minted.expiresAt).getTime(), scopes };
-    this.sessions.set(userId, s);
+    this.sessions.set(cacheKey, s);
     return s;
   }
 
@@ -136,7 +138,7 @@ export class AmpleService {
   }
 
   forgetSession(partnerUserId: string) {
-    this.sessions.delete(partnerUserId);
+    for (const k of [...this.sessions.keys()]) if (k === partnerUserId || k.startsWith(`${partnerUserId}|`)) this.sessions.delete(k);
   }
 
   assertCanTransact() {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useDashboardStore } from "@/store/dashboard";
-import { PoolRipPoolCard } from "@/components/app-home/PoolRipPoolCard";
+import { AmplePackCard } from "@/components/app-home/AmplePackCard";
 import { StakeHomeCard } from "@/components/stake/StakeHomeCard";
 import { RankBadge } from "@/components/RankBadge";
 import { RankProgressDialog } from "@/components/RankProgressDialog";
@@ -202,7 +202,7 @@ export function AppHome() {
               </span>
               <span style={{ fontSize: 14, color: "#6E6C78" }}>USDC on Solana</span>
             </div>
-            {authenticated && <PoolRipPoolCard balanceUsd={balanceUSD ?? 0} getAccessToken={getAccessToken} solanaAddress={null} />}
+            {authenticated && <AmplePackCard userId={userId} getAccessToken={getAccessToken} />}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8, position: "relative", marginTop: "auto" }}>
               <button type="button" onClick={goDeposit} style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 4px", minWidth: 0, textAlign: "center", lineHeight: 1.15, borderRadius: 16, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontWeight: 700, fontSize: 15, boxShadow: "0 10px 30px rgba(255,70,10,0.3)" }}>+ Deposit</button>
               <button type="button" onClick={goWithdraw} className="lh-4" style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 4px", minWidth: 0, textAlign: "center", lineHeight: 1.15, borderRadius: 16, background: "#22222A", border: "1px solid rgba(255,255,255,0.08)", color: "#F2EFE8", fontWeight: 700, fontSize: 15 }}>↑ Withdraw</button>
@@ -219,7 +219,7 @@ export function AppHome() {
             {authenticated && (history.isLoading || history.isPending) && recent.length === 0 && <p style={{ fontSize: 15, color: "#9A98A3", padding: "12px 8px" }}>Loading…</p>}
             {authenticated && history.isError && <p style={{ fontSize: 15, color: "#9A98A3", padding: "12px 8px" }}>Could not load recent activity.</p>}
             {authenticated && history.isSuccess && recent.length === 0 && <p style={{ fontSize: 15, color: "#9A98A3", padding: "12px 8px" }}>No payments yet. Send the first one.</p>}
-            {recent.map((h) => (
+            {recent.slice(0, 6).map((h) => (
               <Link key={h.key} href={h.href} {...(h.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})} className="lh-6" style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 8px", borderRadius: 14, color: "inherit", minWidth: 0 }}>
                 <div style={{ flex: "none", width: 40, height: 40, borderRadius: 13, display: "grid", placeItems: "center", fontWeight: 800, fontSize: 18, background: h.sent ? "rgba(245,150,12,0.14)" : "rgba(60,200,120,0.14)", color: h.sent ? "#F5A623" : "#5FD38E" }}>{h.sent ? "↑" : "↓"}</div>
                 <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>

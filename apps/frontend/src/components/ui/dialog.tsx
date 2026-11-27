@@ -38,10 +38,12 @@ const DialogContent = React.forwardRef<
     // some other page-level overlay (e.g. BalanceModal, which must stay on top even over the
     // Mystery Pack page's own high-z-index sheets) needs to pass this.
     wrapperZIndexClassName?: string;
+    // Same idea for the dark backdrop, which otherwise stays at z-50.
+    overlayZIndexClassName?: string;
   }
->(({ className, children, wrapperZIndexClassName = "z-50", ...props }, ref) => (
+>(({ className, children, wrapperZIndexClassName = "z-50", overlayZIndexClassName, ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay />
+    <DialogOverlay className={overlayZIndexClassName} />
     <div className={cn("fixed inset-0 flex items-center justify-center pointer-events-none", wrapperZIndexClassName)}>
       <DialogPrimitive.Content
         ref={ref}
