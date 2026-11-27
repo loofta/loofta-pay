@@ -110,11 +110,6 @@ export default function Home() {
   const { balanceUSD: looftaBalanceUsd, isLoading: looftaBalanceLoading } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated === true });
   const username = useAuthStore((s) => s.username ?? null);
   const networkMode = useAuthStore((s) => s.networkMode);
-  // Own identifiers, for the self-send guard in handleSend below — never let a signed-in sender
-  // target their own account by any of the handles it's reachable by.
-  const ownLooUsername = useAuthStore((s) => s.looUsername ?? null);
-  const ownTwitterUsername = useAuthStore((s) => s.twitterUsername ?? null);
-  const ownEmail = useAuthStore((s) => s.email ?? null);
   const canMultiSend = true;
   const { login: privyLogin, getAccessToken, user } = usePrivy();
   const [activeTab, setActiveTabState] = useState<"send" | "receive">(() => {
@@ -574,18 +569,8 @@ export default function Home() {
       return;
     }
 
-    // Self-send guard — checks every handle this account is reachable by.
-    const linkedSocialHandles = ((user?.linkedAccounts ?? []) as Array<{ type?: string; username?: string | null }>)
-      .filter((a) => ["telegram", "telegram_oauth", "discord", "discord_oauth", "github", "github_oauth", "twitter", "twitter_oauth"].includes((a.type || "").toLowerCase()))
-      .map((a) => a.username);
-    const myIdentifiers = [username, ownLooUsername, ownTwitterUsername, ownEmail, ...linkedSocialHandles]
-      .filter((v): v is string => !!v)
-      .map((v) => v.replace(/^@/, "").replace(/^loo-/i, "").toLowerCase().trim());
-    const candidateRecipient = (lockedRecipient || trimmed).replace(/^@/, "").replace(/^loo-/i, "").toLowerCase().trim();
-    if (candidateRecipient && myIdentifiers.includes(candidateRecipient)) {
-      toast({ variant: "destructive", title: "Can't send to yourself", description: "Pick a different recipient for this payment." });
-      return;
-    }
+    // Self-send is rejected by the backend after it resolves the handle to an account and wallet,
+    // so a handle that only matches another platform's linked username is never blocked here.
 
     setCreating(true);
     try {

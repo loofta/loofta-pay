@@ -351,6 +351,20 @@ export class ClaimsService {
     split?: number;
     maxDelayMs?: number;
   }): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
+    // Self-send guard, decided on the resolved account (not on handle text): the recipient handle was
+    // looked up server-side, so compare the sender's account and wallet with the recipient's. A handle
+    // that merely matches another platform's linked username no longer trips it.
+    if (params.userId) {
+      let isSelf = params.userId === params.recipientUserId;
+      if (!isSelf) {
+        try {
+          const senderWallet = await this.usersService.getSolanaWalletAddress(params.userId);
+          isSelf = !!senderWallet && senderWallet === params.recipientAddress;
+        } catch { /* sender wallet unavailable, account id check above still applies */ }
+      }
+      if (isSelf) throw new BadRequestException("You can't send a payment to yourself. Pick a different recipient.");
+    }
+
     const requirePrivate = params.requirePrivatePayments;
     const isPrivate = requirePrivate || params.requestedPrivate;
 
