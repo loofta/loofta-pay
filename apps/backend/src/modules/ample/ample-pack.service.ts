@@ -35,13 +35,17 @@ export class AmplePackService {
    * reference (stable once reached, so Ample returns the same pack every time). Earlier payments never count.
    */
   private async paymentState(userId: string): Promise<{ id: string | null; totalUsd: number }> {
-    const { data } = await this.supabase.getClient().from('payments').select('id, status, paid_at, amount, created_at')
-      .eq('sender_user_id', userId).eq('is_devnet', false).in('status', ['SUCCESS', 'PRIVATE_TRANSFER_PENDING'])
+    // Some send flows only fill `created_by` (sender_user_id stays empty), so match either. `created_by` only counts for money the
+    // person sent (direction from_sender), never a request they created. IN_FLIGHT and PRIVATE_TRANSFER_PENDING are private sends whose
+    // sender leg is already paid, and they never get a paid_at.
+    const uid = userId.replace(/[^A-Za-z0-9:_-]/g, '');
+    const { data } = await this.supabase.getClient().from('payments').select('id, status, amount, created_at')
+      .or(`sender_user_id.eq.${uid},and(created_by.eq.${uid},direction.eq.from_sender)`)
+      .eq('is_devnet', false).in('status', ['SUCCESS', 'PRIVATE_TRANSFER_PENDING', 'IN_FLIGHT'])
       .gte('created_at', PACK_OFFER_START).order('created_at', { ascending: true }).limit(500);
     let total = 0;
     let id: string | null = null;
     for (const p of data ?? []) {
-      if (!(p.status === 'SUCCESS' || p.paid_at)) continue;
       total += Number(p.amount) || 0;
       if (!id && total >= MIN_PAYMENT_USD) id = String(p.id);
     }
