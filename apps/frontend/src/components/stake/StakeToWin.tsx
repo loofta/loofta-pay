@@ -324,7 +324,8 @@ export function StakeToWin() {
     try { await fn(); }
     catch (e: any) {
       const m = String(e?.message ?? "");
-      if (/reject|denied|cancel/i.test(m)) setError("Cancelled.");
+      if (/could not be claimed/.test(m)) setError(m);
+      else if (/reject|denied|cancel/i.test(m)) setError("Cancelled.");
       else if (/fail on-chain|no program logs/i.test(m)) setError("The transaction would fail. Make sure your wallet holds the USDC you are staking, then try again.");
       else if (/simulation/i.test(m)) setError("That transaction would fail, check your balance and try again.");
       else if (/exceeds/i.test(m)) setError("That is more than you have staked.");
@@ -512,17 +513,32 @@ export function StakeToWin() {
   const claimAllSolana = () => run("claim", async () => {
     // Always the Solana pool's prizes, also when the page is showing the new pool.
     const list = [...(solOverview?.claimable ?? [])];
-    let done = 0;
+    let done = 0, failed = 0, needsSol = false, firstError = "";
     try {
       for (const p of list) {
-        const o = await opts();
-        const { sig } = await buildSend((plain) => ampleBuildClaim(p.payoutId, o, plain));
-        addClaimed(microOf(p).toString());
-        await report("claim", String(p.payoutAmount), sig, p.payoutId, p.vaultId);
-        done++;
+        try {
+          const o = await opts();
+          const { sig } = await buildSend((plain) => ampleBuildClaim(p.payoutId, o, plain));
+          addClaimed(microOf(p).toString());
+          await report("claim", String(p.payoutAmount), sig, p.payoutId, p.vaultId);
+          done++;
+        } catch (e: any) {
+          const m = String(e?.message ?? "");
+          if (/reject|denied|cancel/i.test(m)) throw e; // they stopped it, do not keep prompting
+          // System program error 0x1 while creating a token account: not enough SOL to open it.
+          if (/custom program error: 0x1\b/.test(m)) needsSol = true;
+          firstError ||= m;
+          failed++;
+        }
       }
     } finally {
       if (done > 0) { setNote(`${done} reward${done === 1 ? "" : "s"} added to your savings${bs.vault ? " in our previous pool. Move or withdraw it from here" : ""}.`); await refresh(); }
+    }
+    if (failed > 0) {
+      const n = `${failed} prize${failed === 1 ? "" : "s"}`;
+      throw new Error(needsSol
+        ? `${n} could not be claimed yet: your wallet needs a little SOL to open the account the prize is paid into. Add about 0.01 SOL to your Loofta wallet, then tap Claim all again.`
+        : `${n} could not be claimed. ${firstError.slice(0, 160)}`);
     }
   });
 
@@ -694,7 +710,8 @@ export function StakeToWin() {
   const usdText = (micro: bigint) => { const n = Number(micro) / 1e6; return `$${n < 1 ? n.toFixed(4) : n.toFixed(2)}`; };
   const claimableTotal = usdText(claimableBase);
   const localWon = BigInt(claimedBase || "0") + claimableBase;
-  const ledgerWon = overview?.totalWonBase ? BigInt(overview.totalWonBase) + claimableBase : BigInt(0);
+  const ledgerTotal = solOverview?.totalWonBase ?? overview?.totalWonBase;
+  const ledgerWon = ledgerTotal ? BigInt(ledgerTotal) + claimableBase : BigInt(0);
   const wonBase = ledgerWon > localWon ? ledgerWon : localWon;
   const wonTotal = wonBase > BigInt(0) ? usdText(wonBase) : null;
   const apr = stats?.avgApr ?? null;
@@ -826,6 +843,12 @@ export function StakeToWin() {
                     <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
                   </div>
                 )}
+
+                {authenticated && wonTotal && !(!isStake && (hasStake || claimableBase > BigInt(0))) ? (
+                  <div style={{ padding: "12px 16px", borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <EarnRow label="Won so far" value={wonTotal} strong />
+                  </div>
+                ) : null}
 
                 {!isStake && (hasStake || claimableBase > BigInt(0)) && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.08)" }}>

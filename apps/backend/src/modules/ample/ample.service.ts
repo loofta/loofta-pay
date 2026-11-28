@@ -526,7 +526,7 @@ export class AmpleService {
     const g = this.setupGlobal.day === day ? this.setupGlobal.n : 0;
     if (n >= 3 || g >= 300) { this.logger.warn(`account setup skipped: daily cap user=${userId}`); throw new BadRequestException('Account setup is not available right now. Try again later.'); }
     if (Date.now() - this.payerBalance.at > 60_000) this.payerBalance = { at: Date.now(), lamports: await conn.getBalance(kp.publicKey) };
-    if (this.payerBalance.lamports < 100_000_000) { this.logger.warn('account setup skipped: fee payer balance below 0.1 SOL'); throw new BadRequestException('Account setup is not available right now. Try again later.'); }
+    if (this.payerBalance.lamports < 20_000_000) { this.logger.warn('account setup skipped: fee payer balance below 0.02 SOL'); throw new BadRequestException('Account setup is not available right now. Try again later.'); }
 
     const { blockhash } = await conn.getLatestBlockhash('confirmed');
     const msg = new TransactionMessage({
@@ -623,9 +623,9 @@ export class AmpleService {
 
       const msg = TransactionMessage.decompile(vtx.message, { addressLookupTableAccounts: tables });
       const sponsorKey = kp.publicKey;
-      // Stop sponsoring when the fee payer drops under 0.1 SOL, so staking can never starve the other features that rely on it.
+      // Stop sponsoring when the fee payer drops under 0.02 SOL, so staking can never starve the other features that rely on it.
       if (Date.now() - this.payerBalance.at > 60_000) this.payerBalance = { at: Date.now(), lamports: await conn.getBalance(sponsorKey) };
-      if (this.payerBalance.lamports < 100_000_000) { this.logger.warn(`fee sponsorship skipped: fee payer balance below 0.1 SOL`); return tx; }
+      if (this.payerBalance.lamports < 20_000_000) { this.logger.warn(`fee sponsorship skipped: fee payer balance below 0.02 SOL`); return tx; }
       // Bound the fee: refuse transactions carrying a large compute-unit price (priority fee), signatures are already limited to two.
       const CB = 'ComputeBudget111111111111111111111111111111';
       let price = 0n;
