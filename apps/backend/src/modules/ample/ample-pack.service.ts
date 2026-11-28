@@ -75,7 +75,7 @@ export class AmplePackService {
       return { eligible: true, pack: detail ?? issued };
     } catch (e: any) {
       const code = e?.getResponse?.()?.code as string | undefined;
-      if (code?.startsWith('AMPLE_PACK_')) return { eligible: false, pack: null, reason: code };
+      if (code?.startsWith('AMPLE_PACK_')) return { eligible: false, pack: null, reason: code, progressUsd: Math.min(totalUsd, MIN_PAYMENT_USD), requiredUsd: MIN_PAYMENT_USD };
       this.logger.warn(`pack lookup failed for ${userId}: ${e?.message ?? e}`);
       throw e;
     }

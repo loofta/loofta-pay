@@ -55,7 +55,9 @@ export function AmplePackCard({ userId, getAccessToken, demoPack }: { userId?: s
   const p = d?.pack;
   const st = String(p?.status ?? "");
   // Shown while loading or if the lookup fails, so the offer is never invisible. Only an explicit "no campaign" or a finished pack hides it.
-  if (d && d.reason) return null;
+  // Paid $10 but Ample has not switched the campaign on yet: keep the card, say the pack is being prepared. Any other reason hides it.
+  const preparing = d?.reason === "AMPLE_PACK_NO_CAMPAIGN";
+  if (d && d.reason && !preparing) return null;
   const drawOver = p?.drawEndsAt && new Date(String(p.drawEndsAt)).getTime() < Date.now();
   // Stays on the home screen from the rip until the campaign ends (the bonus draw has finished).
   if (d?.eligible && (!p || !["UNOPENED", "OPENED", "UNLOCKED", "EXPIRED"].includes(st) || (st !== "OPENED" && drawOver))) return null;
@@ -71,13 +73,15 @@ export function AmplePackCard({ userId, getAccessToken, demoPack }: { userId?: s
   const done = Math.min(d?.progressUsd ?? 0, need);
   const pct = Math.round((done / need) * 100);
 
-  const title = unlocked ? "Your gift is on the way" : expired ? "Ample pack expired" : st === "OPENED" ? "Unlock your Ample pack" : "FREE Ample pack";
-  const sub = locked ? `Pay $${need} in total to rip it.`
+  const paidUp = (d?.progressUsd ?? 0) >= need;
+  const title = preparing && paidUp ? "Your free Ample pack is coming" : unlocked ? "Your gift is on the way" : expired ? "Ample pack expired" : st === "OPENED" ? "Unlock your Ample pack" : "FREE Ample pack";
+  const sub = preparing && paidUp ? "Your $10 is in. Your pack is being prepared, it will be ready to rip here soon."
+    : locked ? `Pay $${need} in total to rip it.`
     : unlocked ? `Your ${p?.bonusTickets ?? ""} bonus tickets count in the draw ending ${fd(p?.drawEndsAt)}. Keep your deposit in until then.`
     : expired ? "The deposit window passed, so this bonus will not count."
     : st === "OPENED" ? `Deposit $${depNeed.toFixed(2)} into Earn${p?.fundingDeadline ? ` by ${fd(p.fundingDeadline)}` : ""} to unlock your ${p?.bonusTickets ?? ""} bonus tickets.`
     : "Rip it open for bonus draw tickets.";
-  const cta = locked ? "Send to unlock" : st === "OPENED" ? "Add to Earn" : unlocked || expired ? "See your pack" : "Rip your pack";
+  const cta = preparing && paidUp ? "" : locked ? "Send to unlock" : st === "OPENED" ? "Add to Earn" : unlocked || expired ? "See your pack" : "Rip your pack";
   const href = locked ? "/app/send" : st === "OPENED" ? "/app/stake" : "/app/pack";
   const showDeposit = st === "OPENED" || unlocked;
 
@@ -125,7 +129,7 @@ export function AmplePackCard({ userId, getAccessToken, demoPack }: { userId?: s
           .amp-cta:active{transform:translateY(0) scale(.98)}
           @media (prefers-reduced-motion:reduce){.amp-cta,.amp-cta::after{transition:none}}
         `}</style>
-        <Link href={href} className="amp-cta">{cta}</Link>
+        {cta && <Link href={href} className="amp-cta">{cta}</Link>}
       </div>
     <AmplePackInfoDialog open={infoOpen} onOpenChange={setInfoOpen} />
     </div>

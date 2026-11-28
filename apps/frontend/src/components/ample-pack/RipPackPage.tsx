@@ -193,8 +193,9 @@ function RipPackInner() {
     const done = pack.data?.progressUsd ?? 0, need = pack.data?.requiredUsd ?? 10;
     return (
       <Screen anim="idle">
-        <h1 className="text-3xl font-extrabold" style={shadow}>{pack.data?.reason ? "No pack available right now" : "Pay $10 to unlock your free pack"}</h1>
-        {!pack.data?.reason && (
+        <h1 className="text-3xl font-extrabold" style={shadow}>{pack.data?.reason === "AMPLE_PACK_NO_CAMPAIGN" ? "Your $10 is in, your pack is coming" : pack.data?.reason ? "No pack available right now" : "Pay $10 to unlock your free pack"}</h1>
+        {pack.data?.reason === "AMPLE_PACK_NO_CAMPAIGN" && <p className="text-lg font-semibold" style={shadow}>We are getting your pack ready. Come back here soon and you can rip it.</p>}
+        {(!pack.data?.reason || pack.data?.reason === "AMPLE_PACK_NO_CAMPAIGN") && (
           <div className="w-full">
             <div className="h-4 w-full overflow-hidden rounded-full bg-black/35"><div className="h-full rounded-full bg-gradient-to-r from-[#7BE0A8] to-[#D6FFE6]" style={{ width: `${Math.min(100, (done / need) * 100)}%` }} /></div>
             <p className="mt-1 text-lg font-bold" style={shadow}>{usd(done)} of {usd(need)} paid</p>
