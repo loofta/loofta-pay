@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
 /** Plain-words explanation of the deposit a prize needs. `amount` is $150 for stocks, cash, AirPods and GTA VI, and $10 for bonus tickets. */
-export function DepositExplainer({ amount, cash }: { amount: number; cash?: boolean }) {
+export function DepositExplainer({ amount, cash, className }: { amount: number; cash?: boolean; className?: string }) {
   const [open, setOpen] = useState(false);
   const steps: Array<[string, string]> = [
     ["Tap Add to Earn", "Earn is Loofta's savings pool with Ample. You put USDC in and it stays yours. You can take it out whenever you want."],
@@ -15,7 +15,7 @@ export function DepositExplainer({ amount, cash }: { amount: number; cash?: bool
   ];
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="mt-4 block w-full text-center text-lg font-bold underline underline-offset-4">What does the ${amount} deposit mean?</button>
+      <button type="button" onClick={() => setOpen(true)} className={className ?? "mt-4 block w-full text-center text-lg font-bold underline underline-offset-4"}>What does the ${amount} deposit mean?</button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent wrapperZIndexClassName="z-[10001]" overlayZIndexClassName="z-[10000]" className="max-h-[90svh] w-[calc(100vw-24px)] max-w-md overflow-y-auto rounded-3xl border border-white/10 bg-[#141418] text-[#F2EFE8] shadow-2xl p-6">
           <DialogTitle className="text-2xl font-extrabold">How to unlock your prize</DialogTitle>

@@ -41,8 +41,13 @@ export function AmplePackCard({ userId, getAccessToken, demoPack }: { userId?: s
     queryKey: ["ample-pack", userId],
     enabled: !!userId && !demoPack,
     retry: 0,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
+    staleTime: 5_000,
+    refetchOnWindowFocus: true,
+    // Fast while they are waiting for a payment to count or the campaign to start, slow once it is in their hands.
+    refetchInterval: (query) => {
+      const x = query.state.data as PackResp | undefined;
+      return x?.eligible && x.pack ? 60_000 : 6_000;
+    },
     queryFn: async () => {
       const token = await getAccessToken().catch(() => null);
       const r = await fetch("/api/ample-pack", { headers: token ? { authorization: `Bearer ${token}` } : {}, cache: "no-store" });

@@ -51,6 +51,42 @@ export class AmplePackService {
     return { id, totalUsd: total };
   }
 
+  /**
+   * Ample's live pack is nested: `lineup.rewards` (what a pack can hold) and, once opened, `receipt` (what was rolled, the deposit
+   * still needed, the deadline). The page reads a flat shape, so flatten it here. Unknown receipt states are logged so new ones show up.
+   */
+  private normalize(raw: any): any {
+    if (!raw || typeof raw !== 'object') return raw;
+    const r = raw.receipt ?? null;
+    const rw = r?.reward ?? null;
+    const rewards: any[] = Array.isArray(raw.lineup?.rewards) ? raw.lineup.rewards : [];
+    const bonusAmounts = rewards.filter((x) => String(x?.kind) === 'BONUS').map((x) => Number(x.amountUsd)).filter((n) => Number.isFinite(n));
+    const minDep = Number(rw?.minDepositUsd ?? rewards[0]?.minDepositUsd ?? raw.minDepositUsd ?? 0) || 0;
+    const needed = r?.depositNeededUsd != null ? Number(r.depositNeededUsd) : minDep;
+    const state = String(r?.state ?? '');
+    let status = String(raw.status ?? '');
+    if (status === 'OPENED' && state) {
+      if (/UNLOCK|COMPLETE|SETTLED|FULFIL|DELIVER|WON|READY/i.test(state)) status = 'UNLOCKED';
+      else if (/EXPIRE|LOST|FAIL|CANCEL/i.test(state)) status = 'EXPIRED';
+      else if (state !== 'DEPOSIT_REQUIRED') this.logger.log(`unrecognised pack receipt state: ${state}`);
+    }
+    const isBonus = String(rw?.kind ?? '') === 'BONUS';
+    return {
+      ...raw,
+      status,
+      reward: rw,
+      receiptState: state || null,
+      // A BONUS reward is worth `amountUsd` in bonus tickets (the lineup is 10, 25, 50, 150).
+      bonusTickets: raw.bonusTickets ?? (isBonus && Number.isFinite(Number(rw?.amountUsd)) ? Number(rw.amountUsd) : null),
+      bonusTicketsRange: raw.bonusTicketsRange ?? (bonusAmounts.length ? { min: Math.min(...bonusAmounts), max: Math.max(...bonusAmounts) } : undefined),
+      minDepositUsd: minDep,
+      withdrawnBeforeOpenUsd: raw.withdrawnBeforeOpenUsd ?? Math.max(0, Math.round((needed - minDep) * 100) / 100),
+      depositedUsd: raw.depositedUsd ?? r?.depositedUsd ?? null,
+      fundingDeadline: raw.fundingDeadline ?? r?.fundingDeadline ?? null,
+      drawEndsAt: raw.drawEndsAt ?? r?.drawEndsAt ?? null,
+    };
+  }
+
   private issue(userId: string, reference: string) {
     return this.ample.request('POST', `/users/${encodeURIComponent(this.key(userId))}/packs`, { kind: 'key' }, { body: { reference } });
   }
@@ -72,7 +108,7 @@ export class AmplePackService {
       }
       const id = String(issued?.id ?? '');
       const detail = id ? await this.ample.request('GET', `/me/packs/${encodeURIComponent(id)}`, this.read(userId)).catch(() => issued) : issued;
-      return { eligible: true, pack: detail ?? issued };
+      return { eligible: true, pack: this.normalize(detail ?? issued) };
     } catch (e: any) {
       const code = e?.getResponse?.()?.code as string | undefined;
       if (code?.startsWith('AMPLE_PACK_')) return { eligible: false, pack: null, reason: code, progressUsd: Math.min(totalUsd, MIN_PAYMENT_USD), requiredUsd: MIN_PAYMENT_USD };
@@ -92,7 +128,7 @@ export class AmplePackService {
     if (this.opening.has(packId)) throw new BadRequestException('This pack is already being opened');
     this.opening.add(packId);
     try {
-      return await this.ample.request('POST', `/me/packs/${encodeURIComponent(packId)}/open`, this.packs(userId), { body: {} });
+      return this.normalize(await this.ample.request('POST', `/me/packs/${encodeURIComponent(packId)}/open`, this.packs(userId), { body: {} }));
     } finally {
       this.opening.delete(packId);
     }

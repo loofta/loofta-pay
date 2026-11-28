@@ -104,7 +104,7 @@ function RipPackInner() {
     queryKey: ["ample-pack"],
     enabled: !!authenticated && !demo,
     retry: 1,
-    refetchInterval: (q) => (String((q.state.data as PackResp | undefined)?.pack?.status ?? "") === "OPENED" ? 30_000 : false),
+    refetchInterval: (q) => { const x = q.state.data as PackResp | undefined; return x?.eligible && x.pack ? (String(x.pack.status) === "OPENED" ? 30_000 : false) : 6_000; },
     queryFn: async () => {
       const token = await getAccessToken().catch(() => null);
       const r = await fetch("/api/ample-pack", { headers: token ? { authorization: `Bearer ${token}` } : {}, cache: "no-store" });
@@ -260,24 +260,26 @@ function Result({ p, loginEmail, demo }: { p: AnyObj; loginEmail?: string; demo:
   const late = p.fundingDeadline && new Date(p.fundingDeadline).getTime() < Date.now();
   const headline = st === "UNLOCKED" ? "Unlocked" : st === "EXPIRED" ? "Expired" : late ? "Checking your deposit" : "Add to Earn to unlock";
   return (
-    <div className={`${glass} w-full`}>
-      <p className="text-lg font-semibold">You pulled</p>
-      <p className="mt-1 text-5xl font-extrabold text-[#FFE28A]">{other ? other.title(p) : `${p.bonusTickets ?? "?"} bonus tickets`}</p>
-      <p className="mt-2 text-xl font-bold">{headline}</p>
-      {other && <p className="mt-1 text-lg">{other.need}</p>}
-      {other && <DepositExplainer amount={150} cash={p.demoPrize === "cash"} />}
+    <div className={`${glass} w-full !p-4`}>
+      <p className="text-base font-semibold opacity-80">You pulled</p>
+      <p className="text-3xl font-extrabold leading-tight text-[#FFE28A]">{other ? other.title(p) : `${p.bonusTickets ?? "?"} bonus tickets`}</p>
+      <p className="mt-1 text-lg font-bold">{headline}</p>
+      {other && <p className="mt-1 text-base">{other.need}</p>}
+      {other && <DepositExplainer amount={150} cash={p.demoPrize === "cash"} className="mt-2 block w-full text-center text-base font-bold underline underline-offset-4" />}
       {demo && (p.demoPrize === "airpods" || p.demoPrize === "gta") && <ClaimEmail loginEmail={loginEmail} />}
       {!other && st === "OPENED" && (
         <>
-          <p className="mt-1 text-lg">Deposit {usd(need)} of new money{p.fundingDeadline ? ` by ${when(p.fundingDeadline)}` : ""}.</p>
-          {Number(p.withdrawnBeforeOpenUsd) > 0 && <p className="text-base">That includes {usd(p.withdrawnBeforeOpenUsd)} you took out in the last 30 days, which is put back first.</p>}
-          <div className="mx-auto mt-3 h-4 w-full overflow-hidden rounded-full bg-black/40"><div className="h-full rounded-full bg-gradient-to-r from-[#7BE0A8] to-[#D6FFE6]" style={{ width: `${pct}%` }} /></div>
-          <p className="mt-1 text-lg font-semibold">{usd(deposited)} of {usd(need)} counted</p>
-          <DepositExplainer amount={Math.max(1, Math.round(need))} />
+          <p className="text-base">Deposit {usd(need)} of new money{p.fundingDeadline ? ` by ${when(p.fundingDeadline)}` : ""}.</p>
+          {Number(p.withdrawnBeforeOpenUsd) > 0 && <p className="text-sm opacity-80">Includes {usd(p.withdrawnBeforeOpenUsd)} you took out in the last 30 days, put back first.</p>}
+          <div className="mx-auto mt-2 h-2.5 w-full overflow-hidden rounded-full bg-black/40"><div className="h-full rounded-full bg-gradient-to-r from-[#7BE0A8] to-[#D6FFE6]" style={{ width: `${pct}%` }} /></div>
+          <div className="mt-1.5 flex items-center justify-between gap-3">
+            <p className="text-base font-semibold">{usd(deposited)} of {usd(need)} counted</p>
+            <DepositExplainer amount={Math.max(1, Math.round(Number(p.minDepositUsd) || need))} className="text-sm font-bold underline underline-offset-4" />
+          </div>
         </>
       )}
-      {st === "UNLOCKED" && <p className="mt-1 text-lg">Your bonus counts in the draw ending {when(p.drawEndsAt)}. Keep your deposit in until then.</p>}
-      {st === "EXPIRED" && <p className="mt-1 text-lg">The deposit window passed, so this bonus will not count.</p>}
+      {st === "UNLOCKED" && <p className="mt-1 text-base">Your bonus counts in the draw ending {when(p.drawEndsAt)}. Keep your deposit in until then.</p>}
+      {st === "EXPIRED" && <p className="mt-1 text-base">The deposit window passed, so this bonus will not count.</p>}
     </div>
   );
 }
