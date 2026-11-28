@@ -3,7 +3,6 @@ import { SupabaseService } from '@/database/supabase.service';
 import { AmpleService } from './ample.service';
 import { AmpleCompanionService } from './ample-companion.service';
 
-const NETWORK = 'EVM';
 /** Payments totalling this much (USD), made on or after the offer start, earn a pack. */
 const MIN_PAYMENT_USD = 10;
 const PACK_OFFER_START = '2026-11-24T00:00:00.000Z';
@@ -53,7 +52,7 @@ export class AmplePackService {
   }
 
   private issue(userId: string, reference: string) {
-    return this.ample.request('POST', `/users/${encodeURIComponent(this.key(userId))}/packs`, { kind: 'key' }, { body: { reference, network: NETWORK } });
+    return this.ample.request('POST', `/users/${encodeURIComponent(this.key(userId))}/packs`, { kind: 'key' }, { body: { reference } });
   }
 
   /** The caller's pack for their first payment, issued on first call. { eligible:false } until a payment confirms or while Ample has no campaign. */
