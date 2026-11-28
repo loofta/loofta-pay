@@ -8,8 +8,8 @@ const MIN_PAYMENT_USD = 10;
 const PACK_OFFER_START = '2026-11-24T00:00:00.000Z';
 
 /**
- * Ample packs (https://api.ample.money/v1, "Ample packs"). A user earns one pack per confirmed payment; `reference` (our payment
- * id) is Ample's idempotency key, so asking again returns the same pack. Packs live on the EVM side (the user's Earn account on
+ * Ample packs (https://api.ample.money/v1, "Ample packs"). One pack per user, ever, earned by paying
+ * $10 in total. Packs live on the EVM side (the user's Earn account on
  * Base, partner user id `evm:<privy id>`), because the bonus only counts if new money is deposited there before the deadline.
  *
  * Opening needs the `packs` scope. The pack id is always checked against what Ample itself issues to this user, never trusted
@@ -29,10 +29,7 @@ export class AmplePackService {
   private read(userId: string) { return { kind: 'session' as const, userId: this.key(userId), scopes: ['read'] }; }
   private packs(userId: string) { return { kind: 'session' as const, userId: this.key(userId), scopes: ['read', 'packs'] }; }
 
-  /**
-   * Payments made since the offer started add up toward $10. The payment that takes the running total to $10 is the pack's
-   * reference (stable once reached, so Ample returns the same pack every time). Earlier payments never count.
-   */
+  /** Payments made since the offer started add up toward $10. Earlier payments never count. `id` is set once $10 is reached. */
   private async paymentState(userId: string): Promise<{ id: string | null; totalUsd: number }> {
     // Some send flows only fill `created_by` (sender_user_id stays empty), so match either. `created_by` only counts for money the
     // person sent (direction from_sender), never a request they created. IN_FLIGHT and PRIVATE_TRANSFER_PENDING are private sends whose
@@ -87,6 +84,12 @@ export class AmplePackService {
     };
   }
 
+  /** The user's packs from us, newest first (Ample's order). */
+  private async ownPacks(userId: string): Promise<any[]> {
+    const r = await this.ample.request('GET', '/me/packs', this.read(userId), { query: { limit: '100' } });
+    return Array.isArray(r?.data) ? r.data : [];
+  }
+
   private issue(userId: string, reference: string) {
     return this.ample.request('POST', `/users/${encodeURIComponent(this.key(userId))}/packs`, { kind: 'key' }, { body: { reference } });
   }
@@ -94,18 +97,21 @@ export class AmplePackService {
   /** The caller's pack for their first payment, issued on first call. { eligible:false } until a payment confirms or while Ample has no campaign. */
   async myPack(userId: string): Promise<{ eligible: boolean; pack: any | null; reason?: string; progressUsd?: number; requiredUsd?: number }> {
     if (!this.ample.isEnabled()) return { eligible: false, pack: null };
-    const { id: reference, totalUsd } = await this.paymentState(userId);
-    if (!reference) return { eligible: false, pack: null, progressUsd: Math.min(totalUsd, MIN_PAYMENT_USD), requiredUsd: MIN_PAYMENT_USD };
+    const { id: crossed, totalUsd } = await this.paymentState(userId);
+    if (!crossed) return { eligible: false, pack: null, progressUsd: Math.min(totalUsd, MIN_PAYMENT_USD), requiredUsd: MIN_PAYMENT_USD };
     try {
-      let issued: any;
+      let own: any[];
       try {
-        issued = await this.issue(userId, reference);
+        own = await this.ownPacks(userId);
       } catch (e: any) {
         if (e?.getResponse?.()?.code !== 'AMPLE_USER_NOT_LINKED') throw e;
         // First time on Ample: set up and link the person's Earn account on Base (no signature from them, gas is sponsored).
         await this.companion.ready(userId);
-        issued = await this.issue(userId, reference);
+        own = await this.ownPacks(userId);
       }
+      // One pack per user: the first one they were ever given is theirs. Only someone with none is issued one, under a reference
+      // that is fixed per user, so asking twice can never create a second.
+      const issued = own.length ? own[own.length - 1] : await this.issue(userId, `loofta-${userId.replace(/[^A-Za-z0-9]/g, '-')}`);
       const id = String(issued?.id ?? '');
       const detail = id ? await this.ample.request('GET', `/me/packs/${encodeURIComponent(id)}`, this.read(userId)).catch(() => issued) : issued;
       return { eligible: true, pack: this.normalize(detail ?? issued) };

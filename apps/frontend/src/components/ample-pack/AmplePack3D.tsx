@@ -52,7 +52,7 @@ export default function AmplePack3D({ phase, card, rarity, hideCard, onRevealed,
       let s = document.querySelector<HTMLScriptElement>('script[data-ample-pack="9"]');
       if (!s) {
         s = document.createElement("script");
-        s.src = "/ample-pack-3d.js?v=11";
+        s.src = "/ample-pack-3d.js?v=12";
         s.async = true;
         s.dataset.amplePack = "9";
         document.head.appendChild(s);

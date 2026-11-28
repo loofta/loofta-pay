@@ -181,8 +181,8 @@
       x.save(); x.beginPath(); x.roundRect ? x.roundRect(26, 26, W - 52, H - 52, 22) : x.rect(26, 26, W - 52, H - 52); x.clip(); x.fillStyle = g; x.fillRect(0, 0, W, H);
       const gl = x.createRadialGradient(cx, H * .42, 10, cx, H * .42, 360); gl.addColorStop(0, 'rgba(120,230,170,.55)'); gl.addColorStop(1, 'rgba(120,230,170,0)'); x.fillStyle = gl; x.fillRect(0, 0, W, H);
       x.textAlign = 'center'; x.fillStyle = '#B8EBD0'; x.font = '600 34px "Clash Display"'; x.letterSpacing = '8px'; x.fillText('AMPLE x LOOFTA', cx, 130);
-      x.fillStyle = '#fff'; x.shadowColor = 'rgba(0,0,0,.5)'; x.shadowBlur = 24; x.shadowOffsetY = 10; x.font = '700 300px "Clash Display"'; x.letterSpacing = '0px'; x.fillText(String(card.tickets), cx, H * .56);
-      x.shadowBlur = 0; x.shadowOffsetY = 0; x.fillStyle = '#7BE0A8'; x.font = '600 46px "Clash Display"'; x.letterSpacing = '10px'; x.fillText('BONUS TICKETS', cx, H * .56 + 90);
+      x.fillStyle = '#fff'; x.shadowColor = 'rgba(0,0,0,.5)'; x.shadowBlur = 24; x.shadowOffsetY = 10; x.font = '700 220px "Clash Display"'; x.letterSpacing = '0px'; x.fillText('$' + String(card.tickets), cx, H * .54, W - 100);
+      x.shadowBlur = 0; x.shadowOffsetY = 0; x.fillStyle = '#7BE0A8'; x.font = '600 46px "Clash Display"'; x.letterSpacing = '10px'; x.fillText('BONUS TICKETS', cx, H * .54 + 90);
       x.fillStyle = 'rgba(255,255,255,.65)'; x.font = '500 26px "Clash Display"'; x.letterSpacing = '3px'; x.fillText('DEPOSIT TO UNLOCK', cx, H - 110);
       x.restore(); return;
     }

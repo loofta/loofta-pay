@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AmplePackInfoDialog } from "@/components/ample-pack/AmplePackInfoDialog";
+import { PackFacts } from "@/components/ample-pack/PackFacts";
 
 const MONO = "var(--font-home-mono), 'JetBrains Mono', monospace";
 
@@ -36,7 +35,6 @@ function MiniPack({ locked }: { locked: boolean }) {
 
 /** Home card: the free Ample pack offer. Locked with a progress bar until $10 of payments, then rip it, then unlock it with a deposit. */
 export function AmplePackCard({ userId, getAccessToken, demoPack }: { userId?: string; getAccessToken: () => Promise<string | null>; demoPack?: PackResp }) {
-  const [infoOpen, setInfoOpen] = useState(false);
   const q = useQuery({
     queryKey: ["ample-pack", userId],
     enabled: !!userId && !demoPack,
@@ -82,10 +80,10 @@ export function AmplePackCard({ userId, getAccessToken, demoPack }: { userId?: s
   const title = preparing && paidUp ? "Your free Ample pack is coming" : unlocked ? "Your gift is on the way" : expired ? "Ample pack expired" : st === "OPENED" ? "Unlock your Ample pack" : "FREE Ample pack";
   const sub = preparing && paidUp ? "Your $10 is in. Your pack is being prepared, it will be ready to rip here soon."
     : locked ? `Pay $${need} in total to rip it.`
-    : unlocked ? `Your ${p?.bonusTickets ?? ""} bonus tickets count in the draw ending ${fd(p?.drawEndsAt)}. Keep your deposit in until then.`
+    : unlocked ? `Your $${p?.bonusTickets ?? ""} in bonus tickets count in the draw ending ${fd(p?.drawEndsAt)}. Keep your deposit in until then.`
     : expired ? "The deposit window passed, so this bonus will not count."
-    : st === "OPENED" ? `Deposit $${depNeed.toFixed(2)} into Earn${p?.fundingDeadline ? ` by ${fd(p.fundingDeadline)}` : ""} to unlock your ${p?.bonusTickets ?? ""} bonus tickets.`
-    : "Rip it open for bonus draw tickets.";
+    : st === "OPENED" ? `Deposit $${depNeed.toFixed(2)} into Earn${p?.fundingDeadline ? ` by ${fd(p.fundingDeadline)}` : ""} to unlock your $${p?.bonusTickets ?? ""} in bonus tickets.${Number(p?.withdrawnBeforeOpenUsd) > 0 ? ` That is $${Number(p?.minDepositUsd).toFixed(2)} plus $${Number(p?.withdrawnBeforeOpenUsd).toFixed(2)} you took out of Earn recently.` : ""}`
+    : "Rip it open to see your bonus.";
   const cta = preparing && paidUp ? "" : locked ? "Send to unlock" : st === "OPENED" ? "Add to Earn" : unlocked || expired ? "See your pack" : "Rip your pack";
   const href = locked ? "/app/send" : st === "OPENED" ? "/app/stake" : "/app/pack";
   const showDeposit = st === "OPENED" || unlocked;
@@ -100,10 +98,10 @@ export function AmplePackCard({ userId, getAccessToken, demoPack }: { userId?: s
         <div style={{ display: "flex", flexDirection: "column" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontWeight: 800, fontSize: 19, letterSpacing: "-0.02em" }}>{title}</span>
-            <button type="button" onClick={() => setInfoOpen(true)} aria-label="What is in the pack" style={{ cursor: "pointer", flex: "none", width: 22, height: 22, borderRadius: "50%", border: "1px solid rgba(255,255,255,.35)", background: "transparent", color: "#C9D6CE", fontSize: 13, fontWeight: 800, lineHeight: 1 }}>i</button>
           </span>
           <span style={{ fontSize: 15, color: "#B7C4BC" }}>{sub}</span>
         </div>
+        {(locked || st === "UNOPENED") && <PackFacts className="text-[15px] text-[#B7C4BC]" />}
         {locked && (
           <>
             <div style={{ height: 8, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
@@ -136,7 +134,6 @@ export function AmplePackCard({ userId, getAccessToken, demoPack }: { userId?: s
         `}</style>
         {cta && <Link href={href} className="amp-cta">{cta}</Link>}
       </div>
-    <AmplePackInfoDialog open={infoOpen} onOpenChange={setInfoOpen} />
     </div>
   );
 }
