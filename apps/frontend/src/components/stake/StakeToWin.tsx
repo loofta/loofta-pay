@@ -510,7 +510,8 @@ export function StakeToWin() {
 
   // Ample takes one payout per transaction, so "claim all" signs them one after another.
   const claimAllSolana = () => run("claim", async () => {
-    const list = [...(overview?.claimable ?? [])];
+    // Always the Solana pool's prizes, also when the page is showing the new pool.
+    const list = [...(solOverview?.claimable ?? [])];
     let done = 0;
     try {
       for (const p of list) {
@@ -521,7 +522,7 @@ export function StakeToWin() {
         done++;
       }
     } finally {
-      if (done > 0) { setNote(`${done} reward${done === 1 ? "" : "s"} added to your stake.`); await refresh(); }
+      if (done > 0) { setNote(`${done} reward${done === 1 ? "" : "s"} added to your savings${bs.vault ? " in our previous pool. Move or withdraw it from here" : ""}.`); await refresh(); }
     }
   });
 
@@ -773,6 +774,17 @@ export function StakeToWin() {
             </div>
 
             <div id="stake" style={{ padding: 8, borderRadius: 28, background: "#121217", border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 40px 100px rgba(0,0,0,0.55)" }}>
+              {authenticated && bs.vault && (solOverview?.claimable?.length ?? 0) > 0 ? (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", margin: "0 0 6px", padding: "12px 16px", borderRadius: 18, background: "rgba(255,138,61,0.08)", border: "1px solid rgba(255,138,61,0.3)" }}>
+                  <span style={{ fontSize: 15, color: "#E4E1EA" }}>
+                    {`You have ${solOverview!.claimable.length} prize${solOverview!.claimable.length === 1 ? "" : "s"} to claim from our previous pool (${usdText(solOverview!.claimable.reduce((a, p) => a + microOf(p), BigInt(0)))}).`}
+                  </span>
+                  <button type="button" disabled={busy !== null || !status?.canTransact} onClick={claimAllSolana}
+                    style={{ cursor: "pointer", padding: "8px 14px", borderRadius: 12, border: "none", background: GRAD, color: "#fff", fontFamily: "inherit", fontWeight: 700, fontSize: 15, opacity: busy !== null ? 0.6 : 1 }}>
+                    {busy === "claim" ? "Claiming..." : "Claim all"}
+                  </button>
+                </div>
+              ) : null}
               {authenticated && !legacy && bs.vault && solHasAny && !(legacyCleared && solPosUsd < 0.01) ? (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", margin: "0 0 6px", padding: "12px 16px", borderRadius: 18, background: "rgba(255,138,61,0.08)", border: "1px solid rgba(255,138,61,0.3)" }}>
                   <span style={{ fontSize: 15, color: "#E4E1EA" }}>{solPosUsd >= 0.01 ? `You have $${fmt(solPosUsd)} saved in our previous pool.` : "You have a small leftover in our previous pool."}</span>
@@ -815,17 +827,17 @@ export function StakeToWin() {
                   </div>
                 )}
 
-                {!isStake && hasStake && (
+                {!isStake && (hasStake || claimableBase > BigInt(0)) && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.08)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Your earnings</span>
-                      <InfoTip label="About your APR" text="Your APR appears after a week of history, until then the pool average of the last month is shown. It varies from week to week and is not a promise." />
+                      <InfoTip label="About this number" text="The pool is paid out as weekly prizes, so most weeks a small deposit wins nothing. This is the average over the last month across everyone, not what you earn. After a week of history your own figure is shown. It varies and is not a promise." />
                     </div>
                     <EarnRow label="Won so far" value={wonTotal ?? "$0"} strong />
                     {claimableBase > BigInt(0) ? <EarnRow label="Waiting to claim" value={claimableTotal} /> : null}
                     {overview?.yourApy !== null && overview?.yourApy !== undefined
                       ? <EarnRow label="Your APR" value={pct(overview.yourApy)} strong />
-                      : apr ? <EarnRow label="Estimated yield (APR)" value={`~${pct(apr)}`} /> : null}
+                      : apr ? <EarnRow label="Pool average, paid as prizes" value={`~${pct(apr)} a year`} /> : null}
                     {wonReturnPct !== null ? <EarnRow label="Return so far" value={`${wonReturnPct < 0.01 ? "<0.01" : wonReturnPct.toFixed(2)}% of your stake`} /> : null}
                     {claimableBase > BigInt(0) ? (
                       <button type="button" disabled={busy !== null || !st?.canTransact} onClick={claimAll}
